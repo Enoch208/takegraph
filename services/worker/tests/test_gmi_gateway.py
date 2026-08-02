@@ -29,7 +29,7 @@ from genblaze_core.pipeline.result import PipelineResult
 from takegraph_domain.enums import ErrorClass, NodeType
 from takegraph_domain.errors import AssetVerificationError, FeatureNotConfiguredError
 from takegraph_domain.generation import GenerationEventKind, GenerationInput, GenerationRequest
-from takegraph_worker.b2_store import B2Settings
+from takegraph_infrastructure.b2 import B2Settings
 from takegraph_worker.gmi_gateway import (
     GMICloudGateway,
     GMICloudSettings,

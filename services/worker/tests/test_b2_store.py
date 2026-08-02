@@ -20,7 +20,7 @@ import uuid
 import pytest
 from takegraph_domain.errors import AssetVerificationError, FeatureNotConfiguredError
 from takegraph_domain.storage.keys import content_address
-from takegraph_worker.b2_store import B2Settings, B2Store
+from takegraph_infrastructure.b2 import B2Settings, B2Store
 
 ORG = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
 

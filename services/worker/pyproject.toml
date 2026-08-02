@@ -5,6 +5,7 @@ description = "TAKEGRAPH worker: durable queue, Genblaze execution, B2 storage, 
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "takegraph-domain",
+    "takegraph-infrastructure",
     "takegraph-api",
     "genblaze-core>=0.3.8,<0.4",
     "genblaze-s3>=0.3.6,<0.4",
@@ -21,4 +22,5 @@ packages = ["takegraph_worker"]
 
 [tool.uv.sources]
 takegraph-domain = { workspace = true }
+takegraph-infrastructure = { workspace = true }
 takegraph-api = { workspace = true }

@@ -1,4 +1,4 @@
-"""Backblaze B2 object store (PRD §15).
+"""Shared Backblaze B2 object store adapter (PRD §15).
 
 Built on `genblaze_s3.S3StorageBackend`, which §14.4 prescribes and which is
 already a pinned dependency — a second S3 client would mean two auth paths and

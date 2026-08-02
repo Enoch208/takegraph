@@ -5,6 +5,7 @@ description = "TAKEGRAPH — the self-healing build system for generative media"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "takegraph-domain",
+    "takegraph-infrastructure",
     "takegraph-api",
     "takegraph-worker",
 ]
@@ -19,10 +20,11 @@ dev = [
 ]
 
 [tool.uv.workspace]
-members = ["packages/domain", "services/api", "services/worker"]
+members = ["packages/domain", "packages/infrastructure", "services/api", "services/worker"]
 
 [tool.uv.sources]
 takegraph-domain = { workspace = true }
+takegraph-infrastructure = { workspace = true }
 takegraph-api = { workspace = true }
 takegraph-worker = { workspace = true }
 
@@ -50,7 +52,7 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
-mypy_path = ["packages/domain", "services/api", "services/worker"]
+mypy_path = ["packages/domain", "packages/infrastructure", "services/api", "services/worker"]
 
 [[tool.mypy.overrides]]
 module = ["genblaze.*", "boto3.*", "botocore.*"]

@@ -5,6 +5,7 @@ description = "TAKEGRAPH FastAPI control plane"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "takegraph-domain",
+    "takegraph-infrastructure",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pydantic-settings>=2.6",
@@ -25,3 +26,4 @@ packages = ["takegraph_api"]
 
 [tool.uv.sources]
 takegraph-domain = { workspace = true }
+takegraph-infrastructure = { workspace = true }

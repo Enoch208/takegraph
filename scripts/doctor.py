@@ -20,7 +20,7 @@ import psycopg
 import redis
 from genblaze_gmicloud import GMICloudImageProvider, GMICloudVideoProvider
 from takegraph_domain.errors import FeatureNotConfiguredError
-from takegraph_worker.b2_store import B2Settings, B2Store
+from takegraph_infrastructure.b2 import B2Settings, B2Store
 
 
 @dataclass(frozen=True, slots=True)

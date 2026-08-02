@@ -50,8 +50,7 @@ from takegraph_domain.generation import (
     ReconciliationResult,
     ReconciliationState,
 )
-
-from takegraph_worker.b2_store import B2Settings
+from takegraph_infrastructure.b2 import B2Settings
 
 GMI_QUEUE_BASE_URL = "https://console.gmicloud.ai/api/v1/ie/requestqueue/apikey"
 

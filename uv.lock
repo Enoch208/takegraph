@@ -7,6 +7,7 @@ members = [
     "takegraph",
     "takegraph-api",
     "takegraph-domain",
+    "takegraph-infrastructure",
     "takegraph-worker",
 ]
 
@@ -750,6 +751,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "takegraph-api" },
     { name = "takegraph-domain" },
+    { name = "takegraph-infrastructure" },
     { name = "takegraph-worker" },
 ]
 
@@ -766,6 +768,7 @@ dev = [
 requires-dist = [
     { name = "takegraph-api", editable = "services/api" },
     { name = "takegraph-domain", editable = "packages/domain" },
+    { name = "takegraph-infrastructure", editable = "packages/infrastructure" },
     { name = "takegraph-worker", editable = "services/worker" },
 ]
 
@@ -792,6 +795,7 @@ dependencies = [
     { name = "redis" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "takegraph-domain" },
+    { name = "takegraph-infrastructure" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -806,6 +810,7 @@ requires-dist = [
     { name = "redis", specifier = ">=5.2" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
     { name = "takegraph-domain", editable = "packages/domain" },
+    { name = "takegraph-infrastructure", editable = "packages/infrastructure" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
@@ -821,6 +826,21 @@ dependencies = [
 requires-dist = [{ name = "pydantic", specifier = ">=2.9,<3" }]
 
 [[package]]
+name = "takegraph-infrastructure"
+version = "0.1.0"
+source = { editable = "packages/infrastructure" }
+dependencies = [
+    { name = "genblaze-s3" },
+    { name = "takegraph-domain" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "genblaze-s3", specifier = ">=0.3.6,<0.4" },
+    { name = "takegraph-domain", editable = "packages/domain" },
+]
+
+[[package]]
 name = "takegraph-worker"
 version = "0.1.0"
 source = { editable = "services/worker" }
@@ -831,6 +851,7 @@ dependencies = [
     { name = "genblaze-s3" },
     { name = "takegraph-api" },
     { name = "takegraph-domain" },
+    { name = "takegraph-infrastructure" },
 ]
 
 [package.metadata]
@@ -841,6 +862,7 @@ requires-dist = [
     { name = "genblaze-s3", specifier = ">=0.3.6,<0.4" },
     { name = "takegraph-api", editable = "services/api" },
     { name = "takegraph-domain", editable = "packages/domain" },
+    { name = "takegraph-infrastructure", editable = "packages/infrastructure" },
 ]
 
 [[package]]
