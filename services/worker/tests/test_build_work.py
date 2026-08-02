@@ -7,7 +7,7 @@ import copy
 import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, text, update
 from takegraph_api.db.models import (
@@ -56,7 +56,12 @@ from takegraph_worker.anthropic_gateway import (
 )
 from takegraph_worker.build_work import BuildWorkHandlers
 from takegraph_worker.elevenlabs_gateway import NarrationRequest, NarrationResult
+from takegraph_worker.elevenlabs_music_gateway import (
+    MusicGenerationRequest,
+    MusicGenerationResult,
+)
 from takegraph_worker.end_card_work import EndCardWorkHandlers
+from takegraph_worker.music_work import MusicWorkHandlers
 from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.runtime import WorkerRuntime
 
@@ -107,6 +112,18 @@ class MemoryStore:
         return url[len(prefix) :] if url.startswith(prefix) else None
 
 
+class FlakyMusicStore(MemoryStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.remaining_music_verify_failures = 1
+
+    def verify(self, key: str, *, expected_sha256: str) -> bool:
+        if key.endswith(".mp3") and self.remaining_music_verify_failures:
+            self.remaining_music_verify_failures -= 1
+            return False
+        return super().verify(key, expected_sha256=expected_sha256)
+
+
 class FakeCopyGenerator:
     def __init__(self, *, failure: Exception | None = None) -> None:
         self.calls: list[CopyGenerationRequest] = []
@@ -127,6 +144,16 @@ class FakeNarrationGenerator:
     async def generate(self, request: NarrationRequest) -> NarrationResult:
         self.calls.append(request)
         return _narration_result(self.store, request.organization_id)
+
+
+class FakeMusicGenerator:
+    def __init__(self, store: MemoryStore) -> None:
+        self.store = store
+        self.calls: list[MusicGenerationRequest] = []
+
+    async def generate(self, request: MusicGenerationRequest) -> MusicGenerationResult:
+        self.calls.append(request)
+        return _music_result(self.store, request.organization_id, model=request.model)
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +211,41 @@ def _normalize_narration(_: bytes) -> tuple[bytes, MediaProbe]:
         has_audio=True,
         sample_rate=48_000,
         channels=1,
+    )
+
+
+def _music_result(
+    store: MemoryStore,
+    organization_id: uuid.UUID,
+    *,
+    model: str = "music_v2",
+) -> MusicGenerationResult:
+    payload = b"ID3" + b"orbit music bytes" * 100
+    digest = hashlib.sha256(payload).hexdigest()
+    key = f"tenants/{organization_id}/cas/sha256/{digest}.mp3"
+    store.objects[key] = payload
+    return MusicGenerationResult(
+        provider_request_id=None,
+        model=model,
+        b2_key=key,
+        sha256=digest,
+        size_bytes=len(payload),
+        media_type="audio/mpeg",
+    )
+
+
+def _probe_music(_: bytes) -> MediaProbe:
+    return MediaProbe(
+        media_kind="AUDIO",
+        format_name="mp3",
+        codec_names=("mp3",),
+        width=None,
+        height=None,
+        duration_ms=20_000,
+        frame_rate=None,
+        has_audio=True,
+        sample_rate=48_000,
+        channels=2,
     )
 
 
@@ -786,5 +848,282 @@ async def test_end_card_composes_verified_product_and_copy_inputs(session, sessi
             ("superseded_phrase", "PASS"),
             ("schema", "PASS"),
         }
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def _prepare_music_execution(
+    session,
+    seeded: IncrementalBuild,
+    store: MemoryStore,
+    *,
+    attempt_status: AttemptStatus | None = None,
+) -> tuple[uuid.UUID, uuid.UUID | None]:
+    await session.execute(
+        text("delete from work_items where build_id=:build_id"), {"build_id": seeded.build_id}
+    )
+    build = await session.get(Build, seeded.build_id)
+    music_node = await session.scalar(
+        select(BuildNode).where(
+            BuildNode.build_id == seeded.build_id,
+            BuildNode.stable_key == "audio.music",
+        )
+    )
+    plan_node = await session.scalar(
+        select(BuildNode).where(
+            BuildNode.build_id == seeded.build_id,
+            BuildNode.stable_key == "plan.shots",
+        )
+    )
+    assert build is not None and music_node is not None and plan_node is not None
+    build.status = str(BuildStatus.RUNNING)
+    music_node.status = str(
+        BuildNodeStatus.RUNNING if attempt_status is not None else BuildNodeStatus.QUEUED
+    )
+    music_node.selected_asset_set_hash = None
+    music_node.reuse_proof_json = None
+
+    plan_bytes = b'{"shots":[{"index":1,"tone":"restrained"}]}'
+    plan_sha = hashlib.sha256(plan_bytes).hexdigest()
+    plan_key = f"tenants/{seeded.organization_id}/plans/{plan_sha}.json"
+    store.objects[plan_key] = plan_bytes
+    plan_asset = Asset(
+        id=uuid.uuid4(),
+        organization_id=seeded.organization_id,
+        sha256=plan_sha,
+        size_bytes=len(plan_bytes),
+        mime_type="application/json",
+        media_kind="DOCUMENT",
+        b2_bucket=store.bucket,
+        b2_key=plan_key,
+        verified_at=datetime.now(UTC),
+    )
+    plan_attempt = Attempt(
+        id=uuid.uuid4(),
+        build_node_id=plan_node.id,
+        attempt_no=1,
+        mechanism=str(AttemptMechanism.PRIMARY),
+        provider="anthropic",
+        model="test-plan-model",
+        idempotency_key=canonical_hash({"plan_node": str(plan_node.id)}),
+        status=str(AttemptStatus.SUCCEEDED),
+    )
+    session.add_all([plan_asset, plan_attempt])
+    await session.flush()
+    session.add(
+        AttemptAsset(
+            id=uuid.uuid4(),
+            attempt_id=plan_attempt.id,
+            asset_id=plan_asset.id,
+            role="plan",
+            ordinal=0,
+            selected=True,
+        )
+    )
+    plan_node.selected_attempt_id = plan_attempt.id
+    plan_node.selected_asset_set_hash = plan_sha
+
+    music_attempt_id: uuid.UUID | None = None
+    if attempt_status is not None:
+        music_attempt_id = uuid.uuid4()
+        music_attempt = Attempt(
+            id=music_attempt_id,
+            build_node_id=music_node.id,
+            attempt_no=1,
+            mechanism=str(AttemptMechanism.PRIMARY),
+            provider="elevenlabs",
+            model="music_v2",
+            idempotency_key=submission_idempotency_key(
+                build_node_id=music_node.id,
+                fingerprint=music_node.fingerprint,
+                mechanism=AttemptMechanism.PRIMARY,
+                provider="elevenlabs",
+                model="music_v2",
+            ),
+            status=str(attempt_status),
+        )
+        session.add(music_attempt)
+        if attempt_status is AttemptStatus.FETCHING:
+            result = _music_result(store, seeded.organization_id)
+            session.add(
+                AttemptEvent(
+                    attempt_id=music_attempt_id,
+                    provider_event_type="attempt.fetching",
+                    provider_event_json=result.model_dump(mode="json"),
+                )
+            )
+    await session.flush()
+    await WorkQueue(session).enqueue(
+        kind="EXECUTE_BUILD_NODE",
+        target_id=music_node.id,
+        build_id=build.id,
+        priority=60,
+        dedupe_key=f"execute:music:{music_node.id}",
+        payload={"stable_key": "audio.music", "trigger_source": "APPLICATION_COMMIT"},
+    )
+    await session.commit()
+    return music_node.id, music_attempt_id
+
+
+def _music_runtime(
+    session_factory,
+    store: MemoryStore,
+    generator: FakeMusicGenerator,
+) -> WorkerRuntime:
+    music_handlers = MusicWorkHandlers(
+        session_factory,
+        store,  # type: ignore[arg-type]
+        generator=generator,
+        prober=_probe_music,
+        environment={"ELEVENLABS_MUSIC_MODEL": "music_v2"},
+    )
+    return WorkerRuntime(
+        session_factory,
+        store,  # type: ignore[arg-type]
+        owner="music-worker-test",
+        lease_seconds=30,
+        heartbeat_seconds=5,
+        concurrency=1,
+        music_handlers=music_handlers,
+    )
+
+
+async def test_music_worker_persists_verified_asset_and_validation_evidence(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    generator = FakeMusicGenerator(store)
+    try:
+        music_node_id, _ = await _prepare_music_execution(session, seeded, store)
+        music_node = await session.get(BuildNode, music_node_id)
+        assert music_node is not None
+        persisted_graph_node = await session.get(GraphNode, music_node.graph_node_id)
+        assert persisted_graph_node is not None
+        assert isinstance(persisted_graph_node.spec_json.get("normalized_operation"), dict), (
+            persisted_graph_node.spec_json
+        )
+
+        receipt = await _music_runtime(session_factory, store, generator).run_once()
+
+        worker_error = await session.scalar(
+            select(WorkItem.last_error).where(WorkItem.target_id == music_node_id)
+        )
+        assert receipt.completed == 1, worker_error
+        assert len(generator.calls) == 1
+        assert generator.calls[0].duration_ms == 20_000
+        assert "Dark graphite set" in generator.calls[0].prompt
+        assert '"tone":"restrained"' in generator.calls[0].prompt
+        session.expire_all()
+        node = await session.get(BuildNode, music_node_id)
+        assert node is not None and node.status == "PASSED"
+        attempt = await session.scalar(
+            select(Attempt).where(Attempt.build_node_id == music_node_id)
+        )
+        assert attempt is not None and attempt.status == "SUCCEEDED"
+        selected = await session.scalar(
+            select(Asset)
+            .join(AttemptAsset, AttemptAsset.asset_id == Asset.id)
+            .where(AttemptAsset.attempt_id == attempt.id, AttemptAsset.selected.is_(True))
+        )
+        assert selected is not None and selected.mime_type == "audio/mpeg"
+        assert selected.metadata_json["duration_ms"] == 20_000
+        assert selected.metadata_json["sample_rate"] == 48_000
+        validations = (
+            await session.scalars(
+                select(Validation).where(Validation.build_node_id == music_node_id)
+            )
+        ).all()
+        assert {(row.gate_key, row.status) for row in validations} == {
+            ("storage_hash", "PASS"),
+            ("media_integrity", "PASS"),
+            ("audio_properties", "PASS"),
+        }
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def test_fetching_music_recovers_without_second_provider_call(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    generator = FakeMusicGenerator(store)
+    try:
+        music_node_id, _ = await _prepare_music_execution(
+            session, seeded, store, attempt_status=AttemptStatus.FETCHING
+        )
+
+        receipt = await _music_runtime(session_factory, store, generator).run_once()
+
+        assert receipt.completed == 1
+        assert generator.calls == []
+        session.expire_all()
+        node = await session.get(BuildNode, music_node_id)
+        assert node is not None and node.status == "PASSED"
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def test_music_storage_verification_retries_without_second_provider_call(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = FlakyMusicStore()
+    generator = FakeMusicGenerator(store)
+    try:
+        music_node_id, _ = await _prepare_music_execution(session, seeded, store)
+        runtime = _music_runtime(session_factory, store, generator)
+
+        first = await runtime.run_once()
+
+        assert first.failed == 1
+        assert len(generator.calls) == 1
+        attempt = await session.scalar(
+            select(Attempt).where(Attempt.build_node_id == music_node_id)
+        )
+        assert attempt is not None and attempt.status == "FETCHING"
+        await session.execute(
+            update(WorkItem)
+            .where(WorkItem.target_id == music_node_id)
+            .values(available_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await session.commit()
+
+        second = await runtime.run_once()
+
+        assert second.completed == 1
+        assert len(generator.calls) == 1
+        session.expire_all()
+        node = await session.get(BuildNode, music_node_id)
+        assert node is not None and node.status == "PASSED"
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def test_submitting_music_is_not_resubmitted_and_requires_review(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    generator = FakeMusicGenerator(store)
+    try:
+        music_node_id, attempt_id = await _prepare_music_execution(
+            session, seeded, store, attempt_status=AttemptStatus.SUBMITTING
+        )
+        assert attempt_id is not None
+
+        receipt = await _music_runtime(session_factory, store, generator).run_once()
+
+        assert receipt.completed == 1
+        assert generator.calls == []
+        session.expire_all()
+        attempt = await session.get(Attempt, attempt_id)
+        node = await session.get(BuildNode, music_node_id)
+        build = await session.get(Build, seeded.build_id)
+        assert attempt is not None and attempt.error_code == "AMBIGUOUS_SUBMISSION"
+        assert attempt.status == "FAILED"
+        assert node is not None and node.status == "WAITING_REVIEW"
+        assert build is not None and build.status == "WAITING_REVIEW"
     finally:
         await _cleanup(session, seeded)

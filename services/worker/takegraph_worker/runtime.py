@@ -16,6 +16,7 @@ from takegraph_infrastructure.b2 import B2Store
 
 from takegraph_worker.build_work import BuildWorkHandlers
 from takegraph_worker.end_card_work import EndCardWorkHandlers
+from takegraph_worker.music_work import MusicWorkHandlers
 from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.source_work import SourceWorkHandlers
 
@@ -40,6 +41,7 @@ class WorkerRuntime:
         concurrency: int,
         build_handlers: BuildWorkHandlers | None = None,
         narration_handlers: NarrationWorkHandlers | None = None,
+        music_handlers: MusicWorkHandlers | None = None,
         end_card_handlers: EndCardWorkHandlers | None = None,
     ) -> None:
         validate_lease_config(lease_seconds, heartbeat_seconds)
@@ -57,6 +59,7 @@ class WorkerRuntime:
         self._narration_handlers = narration_handlers or NarrationWorkHandlers(
             session_factory, store
         )
+        self._music_handlers = music_handlers or MusicWorkHandlers(session_factory, store)
         self._end_card_handlers = end_card_handlers or EndCardWorkHandlers(session_factory, store)
 
     async def run_once(self) -> WorkRunReceipt:
@@ -128,6 +131,9 @@ class WorkerRuntime:
             return
         if stable_key == "audio.narration":
             await self._narration_handlers.execute_build_node(build_node_id)
+            return
+        if stable_key == "audio.music":
+            await self._music_handlers.execute_build_node(build_node_id)
             return
         if stable_key == "graphic.end_card":
             await self._end_card_handlers.execute_build_node(build_node_id)
