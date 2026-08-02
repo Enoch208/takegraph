@@ -32,6 +32,14 @@ class StoredObject:
 
 
 @dataclass(frozen=True, slots=True)
+class ObjectHead:
+    key: str
+    size_bytes: int
+    content_type: str | None
+    metadata: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class B2Settings:
     key_id: str
     app_key: str
@@ -172,6 +180,17 @@ class B2Store:
     def head_size(self, key: str) -> int | None:
         meta = self._backend.head(key)
         return None if meta is None else meta.size
+
+    def head(self, key: str) -> ObjectHead | None:
+        meta = self._backend.head(key)
+        if meta is None:
+            return None
+        return ObjectHead(
+            key=meta.key,
+            size_bytes=meta.size,
+            content_type=meta.content_type,
+            metadata=meta.metadata,
+        )
 
     def get_bytes(self, key: str) -> bytes:
         return self._backend.get(key)

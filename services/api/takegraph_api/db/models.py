@@ -155,11 +155,44 @@ class SourceVersion(Base):
     id: Mapped[UuidPk]
     source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id", ondelete="RESTRICT"))
     revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
     normalized_text: Mapped[str | None] = mapped_column(Text)
     content_hash: Mapped[Sha256]
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[CreatedAt]
+
+
+class UploadIntent(Base):
+    """Short-lived quarantine record binding a presigned key to its expectations."""
+
+    __tablename__ = "upload_intents"
+    __table_args__ = (
+        UniqueConstraint("object_key"),
+        Index("ix_upload_intents_status_expires", "status", "expires_at"),
+    )
+
+    id: Mapped[UuidPk]
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"))
+    source_stable_key: Mapped[str] = mapped_column(String(128))
+    original_file_name: Mapped[str] = mapped_column(String(200))
+    expected_size_bytes: Mapped[int] = mapped_column(Integer)
+    declared_mime_type: Mapped[str] = mapped_column(String(128))
+    client_sha256: Mapped[str | None] = mapped_column(String(64))
+    object_key: Mapped[str] = mapped_column(String(1024))
+    status: Mapped[str] = mapped_column(String(16), default="INITIATED")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("assets.id", ondelete="RESTRICT")
+    )
+    completed_source_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_versions.id", ondelete="RESTRICT")
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[CreatedAt]
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # --------------------------------------------------------------------------- #
@@ -682,7 +715,7 @@ class B2ObjectEvent(Base):
 
     id: Mapped[UuidPk]
     dedupe_key: Mapped[str] = mapped_column(String(256))
-    message_id: Mapped[uuid.UUID] = mapped_column(
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("b2_webhook_messages.id", ondelete="RESTRICT")
     )
     event_type: Mapped[str] = mapped_column(String(64))

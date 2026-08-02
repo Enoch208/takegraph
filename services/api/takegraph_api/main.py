@@ -19,6 +19,7 @@ from takegraph_domain.errors import DomainError
 
 from takegraph_api.b2_webhooks import router as b2_webhook_router
 from takegraph_api.projection import DemoProof, build_demo_proof
+from takegraph_api.uploads import router as uploads_router
 
 API_PREFIX = "/api/v1"
 
@@ -29,6 +30,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 app.include_router(b2_webhook_router)
+app.include_router(uploads_router)
 
 
 @app.middleware("http")
@@ -53,6 +55,7 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
         ApiErrorCode.FORBIDDEN: 403,
         ApiErrorCode.UNAUTHENTICATED: 401,
         ApiErrorCode.VERSION_CONFLICT: 409,
+        ApiErrorCode.UPLOAD_INCOMPLETE: 409,
         ApiErrorCode.IMPACT_PLAN_STALE: 409,
         ApiErrorCode.IDEMPOTENCY_CONFLICT: 409,
         ApiErrorCode.RATE_LIMITED: 429,

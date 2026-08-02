@@ -60,5 +60,10 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["packages/domain/tests", "services/api/tests", "services/worker/tests"]
+testpaths = [
+    "packages/domain/tests",
+    "packages/infrastructure/tests",
+    "services/api/tests",
+    "services/worker/tests",
+]
 filterwarnings = ["error::DeprecationWarning:takegraph_.*"]

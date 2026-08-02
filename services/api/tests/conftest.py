@@ -57,11 +57,15 @@ async def session(engine) -> AsyncIterator[AsyncSession]:
     """
     factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
     async with factory() as s:
-        await s.execute(text("truncate table work_items, b2_object_events, b2_webhook_messages"))
+        await s.execute(
+            text("truncate table work_items, b2_object_events, b2_webhook_messages, upload_intents")
+        )
         await s.commit()
         yield s
         await s.rollback()
-        await s.execute(text("truncate table work_items, b2_object_events, b2_webhook_messages"))
+        await s.execute(
+            text("truncate table work_items, b2_object_events, b2_webhook_messages, upload_intents")
+        )
         await s.commit()
 
 

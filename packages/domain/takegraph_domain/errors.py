@@ -91,6 +91,12 @@ class InvalidSourceError(DomainError):
     error_code = ApiErrorCode.INVALID_SOURCE
 
 
+class UploadIncompleteError(DomainError):
+    """A presigned object is absent, expired, or differs from its upload intent."""
+
+    error_code = ApiErrorCode.UPLOAD_INCOMPLETE
+
+
 class FeatureNotConfiguredError(DomainError):
     """§24.5: a missing credential disables a capability explicitly. It never
     silently degrades to a fixture."""
