@@ -193,14 +193,31 @@ def elevenlabs_check() -> Check:
 
 def elevenlabs_music_check() -> Check:
     key = os.environ.get("ELEVENLABS_API_KEY", "")
-    return provider_catalog_check(
-        name="ElevenLabs music",
-        url="https://api.elevenlabs.io/v1/models",
-        headers={"xi-api-key": key},
-        model_env="ELEVENLABS_MUSIC_MODEL",
-        list_key=None,
-        id_key="model_id",
-    )
+    configured_model = os.environ.get("ELEVENLABS_MUSIC_MODEL", "")
+    if not key or not configured_model:
+        return Check("ElevenLabs music", False, "NOT_CONFIGURED")
+
+    # ElevenLabs serves Music through a dedicated API and does not include its
+    # model IDs in GET /v1/models. The pinned SDK's generated Music contract
+    # accepts these two IDs; validate that contract separately, then use the
+    # subscription endpoint as a non-billable live credential probe. A real
+    # generation smoke test remains the authoritative capability proof.
+    supported_models = {"music_v1", "music_v2"}
+    if configured_model not in supported_models:
+        return Check("ElevenLabs music", False, "configured model unsupported by SDK")
+    try:
+        response = httpx.get(
+            "https://api.elevenlabs.io/v1/user/subscription",
+            headers={"xi-api-key": key},
+            timeout=10,
+        )
+    except httpx.HTTPError:
+        return Check("ElevenLabs music", False, "unreachable")
+    if response.status_code in (401, 403):
+        return Check("ElevenLabs music", False, "credential rejected")
+    if not response.is_success:
+        return Check("ElevenLabs music", False, f"HTTP {response.status_code}")
+    return Check("ElevenLabs music", True, f"{configured_model} live-probed")
 
 
 def anthropic_check() -> Check:
