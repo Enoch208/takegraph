@@ -22,6 +22,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -362,7 +363,7 @@ class BuildNode(Base):
     reason: Mapped[str | None] = mapped_column(Text)
     selected_attempt_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     selected_asset_set_hash: Mapped[str | None] = mapped_column(String(64))
-    reuse_proof_json: Mapped[dict | None] = mapped_column(JSONB)
+    reuse_proof_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     """§12.3 requires the proof to be persisted, not merely computed."""
     started_at: Mapped[datetime | None] = mapped_column()
     completed_at: Mapped[datetime | None] = mapped_column()
@@ -431,7 +432,7 @@ class Asset(Base):
     b2_bucket: Mapped[str] = mapped_column(String(128))
     b2_key: Mapped[str] = mapped_column(String(1024))
     storage_version_id: Mapped[str | None] = mapped_column(String(128))
-    metadata_json: Mapped[dict | None] = mapped_column(JSONB)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     derived_from_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     """§5.7 FR-ASSET-005: thumbnails and proxies reference their source rather
     than replacing it."""
@@ -472,8 +473,8 @@ class Validation(Base):
     status: Mapped[str] = mapped_column(String(16))
     score: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
-    evidence_json: Mapped[dict | None] = mapped_column(JSONB)
-    error_json: Mapped[dict | None] = mapped_column(JSONB)
+    evidence_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[CreatedAt]
 
 
@@ -574,7 +575,7 @@ class WorkItem(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=5)
     dedupe_key: Mapped[str] = mapped_column(String(128))
-    payload_json: Mapped[dict | None] = mapped_column(JSONB)
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[CreatedAt]
 

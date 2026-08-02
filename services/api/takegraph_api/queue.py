@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -56,7 +57,7 @@ class ClaimedItem:
     attempt_count: int
     max_attempts: int
     dedupe_key: str
-    payload: dict | None
+    payload: dict[str, Any] | None
 
 
 class WorkQueue:
@@ -75,7 +76,7 @@ class WorkQueue:
         build_id: uuid.UUID | None = None,
         priority: int = 0,
         delay_seconds: int = 0,
-        payload: dict | None = None,
+        payload: dict[str, Any] | None = None,
         max_attempts: int = 5,
     ) -> uuid.UUID | None:
         """Insert a job, or return None if `dedupe_key` already exists.
@@ -346,7 +347,7 @@ class LeaseLostError(RuntimeError):
     """
 
 
-def _json_or_null(payload: dict | None) -> str | None:
+def _json_or_null(payload: dict[str, Any] | None) -> str | None:
     import json
 
     return None if payload is None else json.dumps(payload)

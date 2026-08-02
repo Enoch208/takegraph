@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any
 
 from sqlalchemy import BigInteger, DateTime, MetaData, Numeric, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -57,7 +57,7 @@ CreatedAt = Annotated[
     datetime,
     mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False),
 ]
-Json = Annotated[dict, mapped_column(JSONB)]
+Json = Annotated[dict[str, Any], mapped_column(JSONB)]
 Money = Annotated[Decimal, mapped_column(Numeric(14, 6))]
 """§8.1: monetary values are numeric(14,6) and never binary float. Unknown cost is
 NULL — §5.3 FR-IMPACT-003 requires unknown to stay unknown rather than becoming 0."""

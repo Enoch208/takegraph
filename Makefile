@@ -41,7 +41,7 @@ fmt: ## Apply formatting
 	uv run ruff check --fix .
 
 typecheck: ## Strict type checking, both toolchains
-	uv run mypy packages/domain/takegraph_domain
+	uv run mypy packages/domain/takegraph_domain services/api/takegraph_api services/worker/takegraph_worker
 	pnpm --filter @takegraph/web typecheck
 
 test: ## Unit and integration tests
