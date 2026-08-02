@@ -169,7 +169,7 @@ class BuildWorkHandlers:
                 raise InvalidSourceError("Copy generation requires string brief and legal line.")
             superseded = await self._superseded_line(session, revision)
             policy = await session.get(ProviderPolicy, graph_node.provider_policy_id)
-            provider, model, timeout = _resolved_policy(policy, self._environment)
+            provider, model, timeout = resolve_provider_policy(policy, self._environment)
             if provider != "anthropic":
                 raise FeatureNotConfiguredError("copy.pack requires the Anthropic policy.")
 
@@ -460,52 +460,12 @@ class BuildWorkHandlers:
                 # must see this node's new PASSED state, not the earlier RUNNING
                 # row still stored in PostgreSQL.
                 await session.flush()
-                await self._schedule_ready(session, build, project)
+                await schedule_ready_nodes(session, build, project)
             else:
                 assert_transition(BuildStatus(build.status), BuildStatus.FAILED, subject="build")
                 self._build_transition(session, project, build, BuildStatus.FAILED)
                 build.completed_at = datetime.now(UTC)
             await session.commit()
-
-    async def _schedule_ready(self, session: AsyncSession, build: Build, project: Project) -> None:
-        pending = (
-            await session.execute(
-                select(BuildNode, GraphNode)
-                .join(GraphNode, GraphNode.id == BuildNode.graph_node_id)
-                .where(BuildNode.build_id == build.id, BuildNode.status == "PENDING")
-            )
-        ).all()
-        queue = WorkQueue(session)
-        for node, graph_node in pending:
-            predecessor_statuses = (
-                await session.scalars(
-                    select(BuildNode.status)
-                    .join(GraphEdge, GraphEdge.from_node_id == BuildNode.graph_node_id)
-                    .where(
-                        BuildNode.build_id == build.id,
-                        GraphEdge.to_node_id == graph_node.id,
-                    )
-                )
-            ).all()
-            if not all(
-                BuildNodeStatus(value).satisfies_dependency for value in predecessor_statuses
-            ):
-                continue
-            assert_transition(BuildNodeStatus.PENDING, BuildNodeStatus.QUEUED, subject="node")
-            node.version += 1
-            await queue.enqueue(
-                kind="EXECUTE_BUILD_NODE",
-                target_id=node.id,
-                build_id=build.id,
-                priority=node_priority(NodeType(graph_node.node_type)),
-                dedupe_key=work_item_dedupe_key(
-                    kind="EXECUTE_BUILD_NODE",
-                    target_id=node.id,
-                    discriminator=node.fingerprint,
-                ),
-                payload={"stable_key": node.stable_key, "trigger_source": "APPLICATION_COMMIT"},
-            )
-            self._node_transition(session, project, build, node, BuildNodeStatus.QUEUED)
 
     async def _recover_result(
         self, session: AsyncSession, attempt_id: uuid.UUID
@@ -716,7 +676,9 @@ class BuildWorkHandlers:
         )
 
 
-def _resolved_policy(policy: ProviderPolicy | None, env: Mapping[str, str]) -> tuple[str, str, int]:
+def resolve_provider_policy(
+    policy: ProviderPolicy | None, env: Mapping[str, str]
+) -> tuple[str, str, int]:
     if policy is None:
         raise FeatureNotConfiguredError("Build node has no provider policy.")
     primary = policy.definition_json.get("primary")
@@ -762,4 +724,69 @@ def _copy_validations(
     )
 
 
-__all__ = ["BuildWorkHandlers", "PreparedCopyWork"]
+async def schedule_ready_nodes(
+    session: AsyncSession,
+    build: Build,
+    project: Project,
+) -> None:
+    pending = (
+        await session.execute(
+            select(BuildNode, GraphNode)
+            .join(GraphNode, GraphNode.id == BuildNode.graph_node_id)
+            .where(BuildNode.build_id == build.id, BuildNode.status == "PENDING")
+        )
+    ).all()
+    queue = WorkQueue(session)
+    for node, graph_node in pending:
+        predecessor_statuses = (
+            await session.scalars(
+                select(BuildNode.status)
+                .join(GraphEdge, GraphEdge.from_node_id == BuildNode.graph_node_id)
+                .where(
+                    BuildNode.build_id == build.id,
+                    GraphEdge.to_node_id == graph_node.id,
+                )
+            )
+        ).all()
+        if not all(BuildNodeStatus(value).satisfies_dependency for value in predecessor_statuses):
+            continue
+        assert_transition(BuildNodeStatus.PENDING, BuildNodeStatus.QUEUED, subject="node")
+        previous = node.status
+        node.status = str(BuildNodeStatus.QUEUED)
+        node.version += 1
+        await queue.enqueue(
+            kind="EXECUTE_BUILD_NODE",
+            target_id=node.id,
+            build_id=build.id,
+            priority=node_priority(NodeType(graph_node.node_type)),
+            dedupe_key=work_item_dedupe_key(
+                kind="EXECUTE_BUILD_NODE",
+                target_id=node.id,
+                discriminator=node.fingerprint,
+            ),
+            payload={"stable_key": node.stable_key, "trigger_source": "APPLICATION_COMMIT"},
+        )
+        session.add(
+            DomainEvent(
+                event_id=uuid.uuid4(),
+                organization_id=project.organization_id,
+                project_id=project.id,
+                build_id=build.id,
+                event_type="build.node.status_changed",
+                payload_json={
+                    "build_node_id": str(node.id),
+                    "stable_key": node.stable_key,
+                    "from": previous,
+                    "to": str(BuildNodeStatus.QUEUED),
+                },
+                correlation_id=uuid.uuid4(),
+            )
+        )
+
+
+__all__ = [
+    "BuildWorkHandlers",
+    "PreparedCopyWork",
+    "resolve_provider_policy",
+    "schedule_ready_nodes",
+]

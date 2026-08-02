@@ -7,12 +7,15 @@ import uuid
 from dataclasses import dataclass
 
 from genblaze_core.exceptions import StorageError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from takegraph_api.db.models import BuildNode
 from takegraph_api.queue import ClaimedItem, LeaseLostError, WorkQueue, validate_lease_config
 from takegraph_domain.errors import AssetVerificationError, DomainError
 from takegraph_infrastructure.b2 import B2Store
 
 from takegraph_worker.build_work import BuildWorkHandlers
+from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.source_work import SourceWorkHandlers
 
 
@@ -35,6 +38,7 @@ class WorkerRuntime:
         heartbeat_seconds: int,
         concurrency: int,
         build_handlers: BuildWorkHandlers | None = None,
+        narration_handlers: NarrationWorkHandlers | None = None,
     ) -> None:
         validate_lease_config(lease_seconds, heartbeat_seconds)
         if not owner or len(owner) > 128:
@@ -48,6 +52,9 @@ class WorkerRuntime:
         self._concurrency = concurrency
         self._handlers = SourceWorkHandlers(session_factory, store)
         self._build_handlers = build_handlers or BuildWorkHandlers(session_factory, store)
+        self._narration_handlers = narration_handlers or NarrationWorkHandlers(
+            session_factory, store
+        )
 
     async def run_once(self) -> WorkRunReceipt:
         async with self._session_factory() as session:
@@ -104,9 +111,24 @@ class WorkerRuntime:
             await self._handlers.process_b2_event(item.target_id)
             return
         if item.kind == "EXECUTE_BUILD_NODE":
-            await self._build_handlers.execute_build_node(item.target_id)
+            await self._execute_build_node(item.target_id)
             return
         raise ValueError(f"unsupported work item kind: {item.kind}")
+
+    async def _execute_build_node(self, build_node_id: uuid.UUID) -> None:
+        async with self._session_factory() as session:
+            stable_key = await session.scalar(
+                select(BuildNode.stable_key).where(BuildNode.id == build_node_id)
+            )
+        if stable_key == "copy.pack":
+            await self._build_handlers.execute_build_node(build_node_id)
+            return
+        if stable_key == "audio.narration":
+            await self._narration_handlers.execute_build_node(build_node_id)
+            return
+        if stable_key is None:
+            raise ValueError("build node was not found")
+        raise ValueError(f"unsupported build node: {stable_key}")
 
     async def _heartbeat(
         self,

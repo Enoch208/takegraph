@@ -199,6 +199,10 @@ class B2Store:
     def get_bytes(self, key: str) -> bytes:
         return self._backend.get(key)
 
+    def key_from_url(self, url: str) -> str | None:
+        """Resolve only URLs belonging to this configured backend."""
+        return self._backend.key_from_url(url)
+
     def presign_put(self, key: str, *, content_type: str, ttl_seconds: int = 900) -> str:
         """§15.3: presigned S3 PUT, never a browser form POST, and short-lived so a
         leaked URL ages out quickly."""

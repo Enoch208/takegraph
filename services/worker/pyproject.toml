@@ -12,6 +12,7 @@ dependencies = [
     "genblaze-gmicloud>=0.3.5,<0.4",
     "boto3>=1.35,<2",
     "anthropic>=0.120.2,<0.121",
+    "genblaze-elevenlabs>=0.3.3,<0.4",
 ]
 
 [build-system]

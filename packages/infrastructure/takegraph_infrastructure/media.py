@@ -14,6 +14,7 @@ from typing import Any, Literal
 from takegraph_domain.errors import InvalidSourceError
 
 MAX_PROBE_OUTPUT_BYTES = 1_048_576
+MAX_NARRATION_INPUT_BYTES = 50 * 1_048_576
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +117,74 @@ def probe_media_path(
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise InvalidSourceError("Media probe returned an invalid result.") from exc
     return _parse_probe(payload)
+
+
+def normalize_narration_bytes(
+    data: bytes,
+    *,
+    temp_root: Path,
+    timeout_seconds: int = 60,
+) -> bytes:
+    """Convert a decoded local audio input into the ORBIT 48 kHz mono WAV contract."""
+    if not data or len(data) > MAX_NARRATION_INPUT_BYTES:
+        raise InvalidSourceError("Narration input exceeds the media safety limit.")
+    if detect_mime(data) not in {"audio/wav", "audio/mpeg", "audio/flac"}:
+        raise InvalidSourceError("Narration input is not a supported audio format.")
+    root = temp_root.resolve()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor, source_name = tempfile.mkstemp(
+        dir=root, prefix="narration-source-", suffix=".audio"
+    )
+    source = Path(source_name)
+    output = root / f"narration-normalized-{source.stem}.wav"
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        command = [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-i",
+            str(source),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-c:a",
+            "pcm_s16le",
+            str(output),
+        ]
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed argv and validated local paths
+                command,
+                check=False,
+                capture_output=True,
+                timeout=timeout_seconds,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise InvalidSourceError(
+                "Narration normalization did not complete within the safety limit."
+            ) from exc
+        if len(result.stdout) + len(result.stderr) > MAX_PROBE_OUTPUT_BYTES:
+            raise InvalidSourceError("Narration normalization output exceeded the safety limit.")
+        if result.returncode != 0 or not output.is_file():
+            raise InvalidSourceError("Narration audio could not be normalized.")
+        normalized = output.read_bytes()
+        probe = probe_media_path(output, temp_root=root, timeout_seconds=timeout_seconds)
+        if probe.media_kind != "AUDIO" or probe.sample_rate != 48_000 or probe.channels != 1:
+            raise InvalidSourceError("Normalized narration does not satisfy the 48 kHz mono spec.")
+        return normalized
+    finally:
+        source.unlink(missing_ok=True)
+        output.unlink(missing_ok=True)
 
 
 def _parse_probe(payload: Any) -> MediaProbe:

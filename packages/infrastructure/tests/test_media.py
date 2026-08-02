@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import base64
+import io
+import struct
+import wave
 
 import pytest
 from takegraph_domain.errors import InvalidSourceError
-from takegraph_infrastructure.media import detect_mime, probe_media_bytes
+from takegraph_infrastructure.media import (
+    detect_mime,
+    normalize_narration_bytes,
+    probe_media_bytes,
+)
 
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -32,3 +39,20 @@ def test_ffprobe_reports_typed_image_metadata(tmp_path) -> None:
 def test_probe_rejects_undecodable_media(tmp_path) -> None:
     with pytest.raises(InvalidSourceError, match="no decodable frame dimensions"):
         probe_media_bytes(b"not media", suffix=".png", temp_root=tmp_path)
+
+
+def test_narration_is_normalized_to_48khz_mono_wav(tmp_path) -> None:
+    source = io.BytesIO()
+    with wave.open(source, "wb") as audio:
+        audio.setnchannels(2)
+        audio.setsampwidth(2)
+        audio.setframerate(22_050)
+        audio.writeframes(b"".join(struct.pack("<hh", 1000, -1000) for _ in range(2_205)))
+
+    normalized = normalize_narration_bytes(source.getvalue(), temp_root=tmp_path)
+    probe = probe_media_bytes(normalized, suffix=".wav", temp_root=tmp_path)
+
+    assert detect_mime(normalized) == "audio/wav"
+    assert probe.media_kind == "AUDIO"
+    assert probe.sample_rate == 48_000
+    assert probe.channels == 1
