@@ -54,6 +54,12 @@ from takegraph_worker.anthropic_gateway import (
     CopyGenerationResult,
     CopyPack,
 )
+from takegraph_worker.anthropic_plan_gateway import (
+    PlanGenerationRequest,
+    PlanGenerationResult,
+    Shot,
+    ShotPlan,
+)
 from takegraph_worker.build_work import BuildWorkHandlers
 from takegraph_worker.elevenlabs_gateway import NarrationRequest, NarrationResult
 from takegraph_worker.elevenlabs_music_gateway import (
@@ -63,6 +69,7 @@ from takegraph_worker.elevenlabs_music_gateway import (
 from takegraph_worker.end_card_work import EndCardWorkHandlers
 from takegraph_worker.music_work import MusicWorkHandlers
 from takegraph_worker.narration_work import NarrationWorkHandlers
+from takegraph_worker.plan_work import PlanWorkHandlers
 from takegraph_worker.runtime import WorkerRuntime
 
 PNG_1X1 = base64.b64decode(
@@ -156,6 +163,15 @@ class FakeMusicGenerator:
         return _music_result(self.store, request.organization_id, model=request.model)
 
 
+class FakePlanGenerator:
+    def __init__(self) -> None:
+        self.calls: list[PlanGenerationRequest] = []
+
+    async def generate(self, request: PlanGenerationRequest) -> PlanGenerationResult:
+        self.calls.append(request)
+        return _plan_result(model=request.model)
+
+
 @dataclass(frozen=True, slots=True)
 class IncrementalBuild:
     organization_id: uuid.UUID
@@ -246,6 +262,27 @@ def _probe_music(_: bytes) -> MediaProbe:
         has_audio=True,
         sample_rate=48_000,
         channels=2,
+    )
+
+
+def _plan_result(*, model: str = "test-plan-model") -> PlanGenerationResult:
+    shots = tuple(
+        Shot(
+            index=index,
+            title=f"ORBIT shot {index}",
+            visual_direction=f"Bottle composition {index} on graphite.",
+            camera="50mm controlled dolly",
+            motion="restrained orbital move",
+            duration_seconds=4,
+        )
+        for index in range(1, 5)
+    )
+    return PlanGenerationResult(
+        provider_message_id="msg_test_plan",
+        model=model,
+        output=ShotPlan(shots=shots),
+        input_tokens=120,
+        output_tokens=240,
     )
 
 
@@ -1123,6 +1160,271 @@ async def test_submitting_music_is_not_resubmitted_and_requires_review(
         build = await session.get(Build, seeded.build_id)
         assert attempt is not None and attempt.error_code == "AMBIGUOUS_SUBMISSION"
         assert attempt.status == "FAILED"
+        assert node is not None and node.status == "WAITING_REVIEW"
+        assert build is not None and build.status == "WAITING_REVIEW"
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def _prepare_plan_execution(
+    session,
+    seeded: IncrementalBuild,
+    store: MemoryStore,
+    *,
+    attempt_status: AttemptStatus | None = None,
+) -> tuple[uuid.UUID, uuid.UUID | None]:
+    await session.execute(
+        text("delete from work_items where build_id=:build_id"), {"build_id": seeded.build_id}
+    )
+    build = await session.get(Build, seeded.build_id)
+    plan_node = await session.scalar(
+        select(BuildNode).where(
+            BuildNode.build_id == seeded.build_id,
+            BuildNode.stable_key == "plan.shots",
+        )
+    )
+    product_node = await session.scalar(
+        select(BuildNode).where(
+            BuildNode.build_id == seeded.build_id,
+            BuildNode.stable_key == "source.product_reference",
+        )
+    )
+    assert build is not None and plan_node is not None and product_node is not None
+    build.status = str(BuildStatus.RUNNING)
+    plan_node.status = str(
+        BuildNodeStatus.RUNNING if attempt_status is not None else BuildNodeStatus.QUEUED
+    )
+    plan_node.selected_attempt_id = None
+    plan_node.selected_asset_set_hash = None
+    plan_node.reuse_proof_json = None
+
+    product_sha = hashlib.sha256(PNG_1X1).hexdigest()
+    product_key = f"tenants/{seeded.organization_id}/sources/{product_sha}.png"
+    store.objects[product_key] = PNG_1X1
+    product_asset = Asset(
+        id=uuid.uuid4(),
+        organization_id=seeded.organization_id,
+        sha256=product_sha,
+        size_bytes=len(PNG_1X1),
+        mime_type="image/png",
+        media_kind="IMAGE",
+        b2_bucket=store.bucket,
+        b2_key=product_key,
+        verified_at=datetime.now(UTC),
+    )
+    product_source = Source(
+        id=uuid.uuid4(),
+        project_id=seeded.project_id,
+        stable_key="source.product_reference",
+        kind="IMAGE",
+    )
+    session.add_all([product_asset, product_source])
+    await session.flush()
+    session.add(
+        SourceVersion(
+            id=uuid.uuid4(),
+            source_id=product_source.id,
+            revision_id=build.project_revision_id,
+            asset_id=product_asset.id,
+            content_hash=product_sha,
+            created_by=uuid.uuid4(),
+        )
+    )
+    product_node.selected_asset_set_hash = product_sha
+    await session.execute(
+        update(BuildNode)
+        .where(
+            BuildNode.build_id == build.id,
+            BuildNode.stable_key.in_({"copy.pack", "audio.narration", "graphic.end_card"}),
+        )
+        .values(status=str(BuildNodeStatus.REUSED))
+    )
+
+    schedulable = {
+        "audio.music",
+        "image.keyframe.01",
+        "image.keyframe.02",
+        "image.keyframe.03",
+        "image.keyframe.04",
+    }
+    await session.execute(
+        update(BuildNode)
+        .where(
+            BuildNode.build_id == build.id,
+            BuildNode.stable_key.in_(schedulable),
+        )
+        .values(status=str(BuildNodeStatus.PENDING), selected_asset_set_hash=None)
+    )
+
+    plan_attempt_id: uuid.UUID | None = None
+    if attempt_status is not None:
+        plan_attempt_id = uuid.uuid4()
+        session.add(
+            Attempt(
+                id=plan_attempt_id,
+                build_node_id=plan_node.id,
+                attempt_no=1,
+                mechanism=str(AttemptMechanism.PRIMARY),
+                provider="anthropic",
+                model="test-plan-model",
+                idempotency_key=submission_idempotency_key(
+                    build_node_id=plan_node.id,
+                    fingerprint=plan_node.fingerprint,
+                    mechanism=AttemptMechanism.PRIMARY,
+                    provider="anthropic",
+                    model="test-plan-model",
+                ),
+                status=str(attempt_status),
+            )
+        )
+        if attempt_status is AttemptStatus.FETCHING:
+            session.add(
+                AttemptEvent(
+                    attempt_id=plan_attempt_id,
+                    provider_event_type="attempt.fetching",
+                    provider_event_json=_plan_result().model_dump(mode="json"),
+                )
+            )
+    await session.flush()
+    await WorkQueue(session).enqueue(
+        kind="EXECUTE_BUILD_NODE",
+        target_id=plan_node.id,
+        build_id=build.id,
+        priority=80,
+        dedupe_key=f"execute:plan:{plan_node.id}",
+        payload={"stable_key": "plan.shots", "trigger_source": "APPLICATION_COMMIT"},
+    )
+    await session.commit()
+    return plan_node.id, plan_attempt_id
+
+
+def _plan_runtime(
+    session_factory,
+    store: MemoryStore,
+    generator: FakePlanGenerator,
+) -> WorkerRuntime:
+    handlers = PlanWorkHandlers(
+        session_factory,
+        store,  # type: ignore[arg-type]
+        generator=generator,
+        environment={"EVALUATOR_MODEL": "test-plan-model"},
+    )
+    return WorkerRuntime(
+        session_factory,
+        store,  # type: ignore[arg-type]
+        owner="plan-worker-test",
+        lease_seconds=30,
+        heartbeat_seconds=5,
+        concurrency=1,
+        plan_handlers=handlers,
+    )
+
+
+async def test_plan_worker_uses_verified_image_and_schedules_five_children(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    generator = FakePlanGenerator()
+    try:
+        plan_node_id, _ = await _prepare_plan_execution(session, seeded, store)
+
+        receipt = await _plan_runtime(session_factory, store, generator).run_once()
+
+        worker_error = await session.scalar(
+            select(WorkItem.last_error).where(WorkItem.target_id == plan_node_id)
+        )
+        assert receipt.completed == 1, worker_error
+        assert len(generator.calls) == 1
+        assert generator.calls[0].product_reference_bytes == PNG_1X1
+        assert generator.calls[0].product_reference_sha256 == hashlib.sha256(PNG_1X1).hexdigest()
+        assert "Dark graphite set" in generator.calls[0].brief
+        session.expire_all()
+        node = await session.get(BuildNode, plan_node_id)
+        assert node is not None and node.status == "PASSED"
+        attempt = await session.scalar(select(Attempt).where(Attempt.build_node_id == plan_node_id))
+        assert attempt is not None and attempt.status == "SUCCEEDED"
+        selected = await session.scalar(
+            select(Asset)
+            .join(AttemptAsset, AttemptAsset.asset_id == Asset.id)
+            .where(AttemptAsset.attempt_id == attempt.id, AttemptAsset.selected.is_(True))
+        )
+        assert selected is not None and selected.metadata_json["schema"] == "shot_plan.v1"
+        stored_plan = ShotPlan.model_validate_json(store.objects[selected.b2_key])
+        assert [shot.index for shot in stored_plan.shots] == [1, 2, 3, 4]
+        validations = (
+            await session.scalars(
+                select(Validation).where(Validation.build_node_id == plan_node_id)
+            )
+        ).all()
+        assert {(row.gate_key, row.status) for row in validations} == {
+            ("schema", "PASS"),
+            ("shot_count", "PASS"),
+            ("duration", "PASS"),
+            ("storage_hash", "PASS"),
+        }
+        queued = set(
+            await session.scalars(
+                select(BuildNode.stable_key).where(
+                    BuildNode.build_id == seeded.build_id,
+                    BuildNode.status == str(BuildNodeStatus.QUEUED),
+                )
+            )
+        )
+        assert queued == {
+            "audio.music",
+            "image.keyframe.01",
+            "image.keyframe.02",
+            "image.keyframe.03",
+            "image.keyframe.04",
+        }
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def test_fetching_plan_recovers_without_second_anthropic_call(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    generator = FakePlanGenerator()
+    try:
+        plan_node_id, _ = await _prepare_plan_execution(
+            session, seeded, store, attempt_status=AttemptStatus.FETCHING
+        )
+
+        receipt = await _plan_runtime(session_factory, store, generator).run_once()
+
+        assert receipt.completed == 1
+        assert generator.calls == []
+        session.expire_all()
+        node = await session.get(BuildNode, plan_node_id)
+        assert node is not None and node.status == "PASSED"
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def test_submitting_plan_is_not_resubmitted_and_requires_review(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    generator = FakePlanGenerator()
+    try:
+        plan_node_id, attempt_id = await _prepare_plan_execution(
+            session, seeded, store, attempt_status=AttemptStatus.SUBMITTING
+        )
+        assert attempt_id is not None
+
+        receipt = await _plan_runtime(session_factory, store, generator).run_once()
+
+        assert receipt.completed == 1
+        assert generator.calls == []
+        session.expire_all()
+        attempt = await session.get(Attempt, attempt_id)
+        node = await session.get(BuildNode, plan_node_id)
+        build = await session.get(Build, seeded.build_id)
+        assert attempt is not None and attempt.error_code == "AMBIGUOUS_SUBMISSION"
         assert node is not None and node.status == "WAITING_REVIEW"
         assert build is not None and build.status == "WAITING_REVIEW"
     finally:

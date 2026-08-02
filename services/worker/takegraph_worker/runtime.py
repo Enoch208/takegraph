@@ -18,6 +18,7 @@ from takegraph_worker.build_work import BuildWorkHandlers
 from takegraph_worker.end_card_work import EndCardWorkHandlers
 from takegraph_worker.music_work import MusicWorkHandlers
 from takegraph_worker.narration_work import NarrationWorkHandlers
+from takegraph_worker.plan_work import PlanWorkHandlers
 from takegraph_worker.source_work import SourceWorkHandlers
 
 
@@ -42,6 +43,7 @@ class WorkerRuntime:
         build_handlers: BuildWorkHandlers | None = None,
         narration_handlers: NarrationWorkHandlers | None = None,
         music_handlers: MusicWorkHandlers | None = None,
+        plan_handlers: PlanWorkHandlers | None = None,
         end_card_handlers: EndCardWorkHandlers | None = None,
     ) -> None:
         validate_lease_config(lease_seconds, heartbeat_seconds)
@@ -60,6 +62,7 @@ class WorkerRuntime:
             session_factory, store
         )
         self._music_handlers = music_handlers or MusicWorkHandlers(session_factory, store)
+        self._plan_handlers = plan_handlers or PlanWorkHandlers(session_factory, store)
         self._end_card_handlers = end_card_handlers or EndCardWorkHandlers(session_factory, store)
 
     async def run_once(self) -> WorkRunReceipt:
@@ -128,6 +131,9 @@ class WorkerRuntime:
             )
         if stable_key == "copy.pack":
             await self._build_handlers.execute_build_node(build_node_id)
+            return
+        if stable_key == "plan.shots":
+            await self._plan_handlers.execute_build_node(build_node_id)
             return
         if stable_key == "audio.narration":
             await self._narration_handlers.execute_build_node(build_node_id)
