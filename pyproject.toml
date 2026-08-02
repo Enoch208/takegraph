@@ -50,6 +50,7 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 plugins = ["pydantic.mypy"]
+mypy_path = ["packages/domain", "services/api", "services/worker"]
 
 [[tool.mypy.overrides]]
 module = ["genblaze.*", "boto3.*", "botocore.*"]
