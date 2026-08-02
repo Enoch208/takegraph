@@ -57,6 +57,18 @@ class BudgetExceededError(DomainError):
     error_code = ApiErrorCode.BUDGET_EXCEEDED
 
 
+class ProviderUnavailableError(DomainError):
+    error_code = ApiErrorCode.PROVIDER_UNAVAILABLE
+
+
+class ProviderAuthError(DomainError):
+    error_code = ApiErrorCode.PROVIDER_AUTH_FAILED
+
+
+class ProviderQuotaError(DomainError):
+    error_code = ApiErrorCode.PROVIDER_QUOTA
+
+
 class AssetVerificationError(DomainError):
     """§8.3.6/§8.3.7: stored bytes did not match the recorded or declared hash."""
 
