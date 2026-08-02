@@ -12,30 +12,22 @@ function readTemplateCode(): string {
 
 const templateCode = readTemplateCode();
 
-const HERO_DEPENDENCY_GRAPH = `<div id="tg-hero-graph" aria-hidden="true"><svg viewBox="0 0 1440 820" preserveAspectRatio="xMidYMid slice" role="presentation"><g class="tg-base-edges"><path d="M90 280 C220 280 210 170 350 170"/><path d="M90 280 C230 280 220 330 350 330"/><path d="M90 510 C220 510 220 430 350 430"/><path d="M350 170 C500 170 490 110 630 110"/><path d="M350 170 C500 170 490 215 630 215"/><path d="M350 330 C500 330 490 320 630 320"/><path d="M350 430 C500 430 490 425 630 425"/><path d="M630 110 C790 110 780 155 930 155"/><path d="M630 215 C790 215 780 255 930 255"/><path d="M630 320 C790 320 780 355 930 355"/><path d="M630 425 C790 425 780 455 930 455"/><path d="M930 155 C1090 155 1080 320 1230 320"/><path d="M930 255 C1090 255 1080 340 1230 340"/><path d="M930 355 C1090 355 1080 360 1230 360"/><path d="M930 455 C1090 455 1080 380 1230 380"/></g><g class="tg-reused-edges"><path d="M90 280 C220 280 210 170 350 170"/><path d="M350 170 C500 170 490 110 630 110"/><path d="M350 170 C500 170 490 215 630 215"/><path d="M630 110 C790 110 780 155 930 155"/><path d="M630 215 C790 215 780 255 930 255"/></g><g class="tg-affected-edges"><path pathLength="1" d="M90 510 C220 510 220 430 350 430"/><path pathLength="1" d="M350 430 C500 430 490 425 630 425"/><path pathLength="1" d="M630 425 C790 425 780 455 930 455"/><path pathLength="1" d="M930 455 C1090 455 1080 380 1230 380"/></g><g class="tg-nodes"><circle class="tg-node-reused" cx="90" cy="280" r="5"/><circle class="tg-node-review" cx="90" cy="510" r="6"/><circle class="tg-node-reused" cx="350" cy="170" r="5"/><circle class="tg-node-reused" cx="350" cy="330" r="5"/><circle class="tg-node-affected" cx="350" cy="430" r="7"/><circle class="tg-node-reused" cx="630" cy="110" r="5"/><circle class="tg-node-reused" cx="630" cy="215" r="5"/><circle class="tg-node-running" cx="630" cy="320" r="6"/><circle class="tg-node-affected" cx="630" cy="425" r="7"/><circle class="tg-node-reused" cx="930" cy="155" r="5"/><circle class="tg-node-reused" cx="930" cy="255" r="5"/><circle class="tg-node-running" cx="930" cy="355" r="6"/><circle class="tg-node-affected" cx="930" cy="455" r="7"/><circle class="tg-node-affected" cx="1230" cy="380" r="8"/></g></svg></div>`;
-
 const LANDING_PERFORMANCE_HEAD = `<link rel="icon" href="/icon.png" type="image/png"><style id="takegraph-performance">
 html{scroll-behavior:smooth;scroll-padding-top:112px;background:#050608}
 body{position:relative;overscroll-behavior-y:none;background:#050608!important}
 .gradient-blur>div,.gradient-blur::before,.gradient-blur::after{display:none!important}
 .gradient-blur{background:linear-gradient(to bottom,rgba(5,6,8,.88),rgba(5,6,8,.3),transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);mask-image:linear-gradient(to bottom,black 0%,black 42%,transparent 100%)}
-[data-us-project="sajpUiTp7MIKdX6daDCu"]{opacity:.5!important;filter:brightness(.52) saturate(1.18) sepia(.12) hue-rotate(8deg)}
-body>.aura-background-component::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(to bottom,rgba(5,6,8,.32),rgba(5,6,8,.7)),radial-gradient(ellipse at 50% 26%,rgba(255,106,53,.18),transparent 60%)}
-#tg-hero-graph{position:absolute;inset:0 0 auto;width:100%;height:880px;z-index:0;pointer-events:none;overflow:hidden;opacity:.2;mix-blend-mode:screen;mask-image:radial-gradient(ellipse 82% 72% at 50% 38%,black 18%,transparent 82%)}
-#tg-hero-graph svg{width:100%;height:100%}
-#tg-hero-graph path{fill:none;vector-effect:non-scaling-stroke}
-.tg-base-edges path{stroke:#2A3039;stroke-width:1}
-.tg-reused-edges path{stroke:#39D98A;stroke-width:1.15;opacity:.36}
-.tg-affected-edges path{stroke:#FF6A35;stroke-width:2;stroke-linecap:round;stroke-dasharray:.045 .955;animation:tgGraphFlow 3.8s linear infinite;filter:drop-shadow(0 0 5px rgba(255,106,53,.7))}
-.tg-nodes circle{stroke:#050608;stroke-width:2;vector-effect:non-scaling-stroke}
-.tg-node-reused{fill:#39D98A}.tg-node-running{fill:#67A7FF}.tg-node-review{fill:#F5C451}.tg-node-affected{fill:#FF6A35;filter:drop-shadow(0 0 7px rgba(255,106,53,.8))}
-body>section:not(:first-of-type),body>footer{content-visibility:auto;contain-intrinsic-size:auto 900px}
+body>.aura-background-component{z-index:0!important;isolation:isolate;overflow:hidden;background:radial-gradient(ellipse at 50% 22%,rgba(255,106,53,.2),rgba(5,6,8,.88) 66%)}
+body>.aura-background-component>.aura-background-component,[data-us-project="sajpUiTp7MIKdX6daDCu"]{z-index:0!important}
+[data-us-project="sajpUiTp7MIKdX6daDCu"]{opacity:.72!important;filter:brightness(.68) saturate(1.25) sepia(.1) hue-rotate(8deg)}
+body>.aura-background-component::after{content:"";position:absolute;z-index:1;inset:0;pointer-events:none;background:linear-gradient(to bottom,rgba(5,6,8,.16),rgba(5,6,8,.58)),radial-gradient(ellipse at 50% 24%,rgba(255,106,53,.16),transparent 62%)}
+body>section:first-of-type{z-index:1}
+.animate-on-scroll,.col-anim{animation:none!important;animation-play-state:running!important;opacity:1!important;transform:none!important;filter:none!important;clip-path:none!important}
 body>section:first-of-type>.z-10>div.flex>button{min-width:260px!important;padding-inline:28px!important;flex:0 0 auto;overflow:hidden}
 body>section:first-of-type>.z-10>div.flex>button span{white-space:nowrap}
 .tg-offscreen *{animation-play-state:paused!important}
-@keyframes tgGraphFlow{to{stroke-dashoffset:-1}}
 @media(max-width:640px){body>section:first-of-type>.z-10>div.flex{width:100%}body>section:first-of-type>.z-10>div.flex>button{width:100%;min-width:0!important;max-width:360px}}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.tg-offscreen *{animation:none!important}.tg-affected-edges path{animation:none;stroke-dasharray:none;opacity:.8}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.tg-offscreen *{animation:none!important}}
 </style>`;
 
 function escapeRegExp(value: string): string {
@@ -318,6 +310,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     .replace(/<link id="all-fonts-link-font-(?!manrope"|oswald")[^>]*>/g, "")
     .replace(/<style id="all-fonts-style-font-(?!manrope"|oswald")[^"]*">[\s\S]*?<\/style>/g, "")
     .replace(/<script>\s*\/\*\s*Sequence animation on scroll[\s\S]*?<\/script>/i, "")
+    .replace(/<script>\s*\(function \(\) \{\s*const once = true;[\s\S]*?<\/script>/i, "")
     .replace(
       /<style>\s*\/\* Default: paused \*\/[\s\S]*?\.animate-on-scroll\.animate \{ animation-play-state: running !important; \}\s*<\/style>/g,
       "",
@@ -333,7 +326,6 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     .replaceAll("red-500", "[#FF6A35]")
     .replaceAll("red-200", "[#FFD7C8]")
     .replaceAll("red-100", "[#FFD7C8]")
-    .replace(/(<body[^>]*>)/i, `$1${HERO_DEPENDENCY_GRAPH}`)
     .replace(/https:\/\/images\.unsplash\.com\/photo-[^"']+\?w=(?:100|150)&amp;h=(?:100|150)&amp;fit=crop/g, "/brand/mark.png")
     .replace(/alt=["'](?:Sarah|Marcus|Michael|Sofia|David|Alex|Profile)["']/g, 'alt="TAKEGRAPH build evidence"')
     .replace('alt="Agency Hero"', 'alt="Placeholder for the ORBIT cinematic master"')
@@ -370,7 +362,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     )
     .replace(
       "</body>",
-      `<script>var tgSections=document.querySelectorAll("body>section,body>footer");var tgObserver=new IntersectionObserver(function(entries){entries.forEach(function(entry){entry.target.classList.toggle("tg-offscreen",!entry.isIntersecting)})},{rootMargin:"400px 0px"});tgSections.forEach(function(section){tgObserver.observe(section)});document.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;var label=(button.textContent||"").replace(/\\s+/g," ").trim().toUpperCase();var demo=["OPEN LIVE BUILD","PREVIEW IMPACT","OPEN ORBIT BUILD","MORE","OPEN EVIDENCE VIEW","INSPECT RELEASE"];var sections={"SEE CHANGE PROPAGATE":"workflow","WATCH BUILD FLOW":"workflow","EXPLORE ARCHITECTURE":"capabilities","LINEAGE":"evidence","MANIFEST":"evidence","INSPECT PROOF":"evidence"};if(demo.includes(label)){window.location.href="/demo";return}if(sections[label]){document.getElementById(sections[label])?.scrollIntoView({behavior:"smooth",block:"start"});return}if(["LOCAL","DETERMINISTIC","CONFIRM BUILD","PREVIEW ONLY"].includes(label)){event.preventDefault();button.disabled=true;button.setAttribute("aria-disabled","true")}});</script></body>`,
+      `<script>var tgSections=document.querySelectorAll("body>section,body>footer");var tgObserver=new IntersectionObserver(function(entries){entries.forEach(function(entry){entry.target.classList.toggle("tg-offscreen",!entry.isIntersecting)})},{rootMargin:"800px 0px"});tgSections.forEach(function(section){tgObserver.observe(section)});document.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;var label=(button.textContent||"").replace(/\\s+/g," ").trim().toUpperCase();var demo=["OPEN LIVE BUILD","PREVIEW IMPACT","OPEN ORBIT BUILD","MORE","OPEN EVIDENCE VIEW","INSPECT RELEASE"];var sections={"SEE CHANGE PROPAGATE":"workflow","WATCH BUILD FLOW":"workflow","EXPLORE ARCHITECTURE":"capabilities","LINEAGE":"evidence","MANIFEST":"evidence","INSPECT PROOF":"evidence"};if(demo.includes(label)){window.location.href="/demo";return}if(sections[label]){document.getElementById(sections[label])?.scrollIntoView({behavior:"smooth",block:"start"});return}if(["LOCAL","DETERMINISTIC","CONFIRM BUILD","PREVIEW ONLY"].includes(label)){event.preventDefault();button.disabled=true;button.setAttribute("aria-disabled","true")}});</script></body>`,
     );
 
   adapted = dedupeHtmlFragments(
@@ -488,11 +480,10 @@ function replaceTemplateIcons(source: string): string {
 }
 
 /**
- * The JSON export is the visual source of truth. The only deliberate changes
- * are non-visual: remove Aura's cross-frame referral write and swap its icon
- * runtimes/markup for the project's HugeIcons registry. The Unicorn scene,
- * Tailwind runtime, typography, imagery, layout, animation and page scripts are
- * otherwise left byte-for-byte as supplied by the export.
+ * The JSON export is the visual source of truth. TAKEGRAPH keeps its layout,
+ * typography, imagery and Unicorn scene while replacing third-party icons,
+ * adapting product content, and removing delayed scroll-reveal behavior that
+ * can leave content blank during fast navigation.
  */
 export function landingTemplateHtml(proof: Result<DemoProof>): string {
   const withoutReferralTracking = templateCode.replace(
