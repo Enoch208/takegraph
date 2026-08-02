@@ -142,6 +142,26 @@ class TestDurableIngestion:
         assert await session.scalar(text("select count(*) from b2_object_events")) == 1
         assert await session.scalar(text("select count(*) from work_items")) == 1
 
+    async def test_distinct_event_ids_for_same_object_queue_one_action(self, session) -> None:
+        first_body = _body([_event("evt-object-first")])
+        second_event = _event("evt-object-second")
+        second_event["objectName"] = "temporary/uploads/evt-object-first/source.png"
+        second_event["objectVersionId"] = "another-confirmation"
+        second_body = _body([second_event])
+        ingestor = B2WebhookIngestor(session)
+
+        await ingestor.ingest(
+            raw_body=first_body, signature_header=_signature(first_body), secret=SECRET
+        )
+        await session.commit()
+        await ingestor.ingest(
+            raw_body=second_body, signature_header=_signature(second_body), secret=SECRET
+        )
+        await session.commit()
+
+        assert await session.scalar(text("select count(*) from b2_object_events")) == 2
+        assert await session.scalar(text("select count(*) from work_items")) == 1
+
     async def test_test_event_is_recorded_without_work(self, session) -> None:
         body = _body([_event("evt-test", "b2:TestEvent")])
         receipt = await B2WebhookIngestor(session).ingest(

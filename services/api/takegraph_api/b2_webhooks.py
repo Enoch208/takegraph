@@ -208,7 +208,11 @@ class B2WebhookIngestor:
                 work_id = await queue.enqueue(
                     kind="process_b2_event",
                     target_id=event_row_id,
-                    dedupe_key=f"b2:{event.event_id}",
+                    dedupe_key=object_work_dedupe(
+                        bucket=event.bucket_name or "",
+                        object_key=event.object_name or "",
+                        event_type=event.event_type,
+                    ),
                 )
                 if work_id is not None:
                     queued += 1
@@ -246,6 +250,18 @@ def _event_timestamp(milliseconds: int) -> datetime:
         return datetime.fromtimestamp(milliseconds / 1000, tz=UTC)
     except (OverflowError, OSError, ValueError) as exc:
         raise InvalidSourceError("B2 event timestamp is outside the accepted range.") from exc
+
+
+def object_work_dedupe(*, bucket: str, object_key: str, event_type: str) -> str:
+    """Collapse duplicate confirmations of one immutable object operation.
+
+    B2 event IDs deduplicate event records. Work is keyed by the operation's
+    object coordinates so a webhook racing the periodic reconciler still creates
+    one downstream action. Creation and deletion remain distinct operations.
+    """
+    family = "delete" if event_type.startswith("b2:ObjectDeleted:") else "create"
+    digest = hashlib.sha256(f"{bucket}\0{object_key}\0{family}".encode()).hexdigest()
+    return f"b2-object:{digest}"
 
 
 router = APIRouter(tags=["webhooks"])
