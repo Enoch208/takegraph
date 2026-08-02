@@ -207,23 +207,6 @@ def compute_impact(
 
         old_fingerprint = candidate.fingerprint if candidate else None
 
-        if stable_key in blocked_keys:
-            impacts.append(
-                NodeImpact(
-                    stable_key=stable_key,
-                    decision=ImpactDecision.BLOCKED,
-                    reason_code=ReasonCode.CONFIGURATION_BLOCKED,
-                    reason=blocked_keys[stable_key],
-                    old_fingerprint=old_fingerprint,
-                    new_fingerprint=proposed,
-                    provider_calls=0,
-                    estimated_cost_usd=None,
-                    requires_human_review=True,
-                )
-            )
-            output_refs[stable_key] = None
-            continue
-
         rejection = evaluate_reuse_proof(
             proposed_fingerprint=proposed,
             candidate=candidate,
@@ -257,6 +240,26 @@ def compute_impact(
                 reason_code=ReasonCode.CACHE_ASSET_MISSING,
                 reason="Reuse was proven but the candidate has no selected output.",
             )
+
+        # A provider credential is needed only when this plan must execute the
+        # node. Exact validated reuse remains valid after key rotation or when a
+        # no-longer-needed provider is temporarily unconfigured.
+        if stable_key in blocked_keys:
+            impacts.append(
+                NodeImpact(
+                    stable_key=stable_key,
+                    decision=ImpactDecision.BLOCKED,
+                    reason_code=ReasonCode.CONFIGURATION_BLOCKED,
+                    reason=blocked_keys[stable_key],
+                    old_fingerprint=old_fingerprint,
+                    new_fingerprint=proposed,
+                    provider_calls=0,
+                    estimated_cost_usd=None,
+                    requires_human_review=True,
+                )
+            )
+            output_refs[stable_key] = None
+            continue
 
         reason_code, reason = _refine_rebuild_reason(
             node_key=stable_key,

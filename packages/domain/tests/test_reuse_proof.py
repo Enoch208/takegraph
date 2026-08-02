@@ -295,6 +295,22 @@ class TestBlockedNodes:
         )
         assert "compose.delivery_package" in set(result.rebuild_keys)
 
+    def test_missing_provider_does_not_invalidate_an_exact_reuse(self) -> None:
+        """A cached node does not need the credential that originally built it."""
+        graph = orbit_graph()
+        states = completed_build_states(graph)
+
+        result = compute_impact(
+            graph,
+            base_states=states,
+            source_content_hashes=SOURCE_CONTENT_HASHES,
+            generator_code_version=GENERATOR_CODE_VERSION,
+            blocked_keys={"audio.music": "ELEVENLABS_MUSIC_MODEL is not configured."},
+        )
+
+        music = next(node for node in result.nodes if node.stable_key == "audio.music")
+        assert music.decision is ImpactDecision.REUSE
+
 
 class TestSourceHashRequired:
     def test_missing_source_hash_fails_loudly(self) -> None:

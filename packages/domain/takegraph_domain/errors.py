@@ -57,6 +57,14 @@ class ImpactPlanStaleError(DomainError):
     error_code = ApiErrorCode.IMPACT_PLAN_STALE
 
 
+class BuildNotRunnableError(DomainError):
+    error_code = ApiErrorCode.BUILD_NOT_RUNNABLE
+
+
+class IdempotencyConflictError(DomainError):
+    error_code = ApiErrorCode.IDEMPOTENCY_CONFLICT
+
+
 class BudgetExceededError(DomainError):
     error_code = ApiErrorCode.BUDGET_EXCEEDED
 

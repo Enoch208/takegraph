@@ -18,6 +18,7 @@ from takegraph_domain.enums import ApiErrorCode, CapabilityState
 from takegraph_domain.errors import DomainError
 
 from takegraph_api.b2_webhooks import router as b2_webhook_router
+from takegraph_api.changes import router as changes_router
 from takegraph_api.projection import DemoProof, build_demo_proof
 from takegraph_api.projects import router as projects_router
 from takegraph_api.uploads import router as uploads_router
@@ -31,6 +32,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 app.include_router(b2_webhook_router)
+app.include_router(changes_router)
 app.include_router(projects_router)
 app.include_router(uploads_router)
 
@@ -59,6 +61,7 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
         ApiErrorCode.VERSION_CONFLICT: 409,
         ApiErrorCode.UPLOAD_INCOMPLETE: 409,
         ApiErrorCode.IMPACT_PLAN_STALE: 409,
+        ApiErrorCode.BUILD_NOT_RUNNABLE: 409,
         ApiErrorCode.IDEMPOTENCY_CONFLICT: 409,
         ApiErrorCode.RATE_LIMITED: 429,
         ApiErrorCode.B2_SIGNATURE_INVALID: 401,
