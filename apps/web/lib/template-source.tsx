@@ -23,10 +23,23 @@ body>.aura-background-component>.aura-background-component,[data-us-project="saj
 body>.aura-background-component::after{content:"";position:absolute;z-index:1;inset:0;pointer-events:none;background:linear-gradient(to bottom,rgba(5,6,8,.16),rgba(5,6,8,.58)),radial-gradient(ellipse at 50% 24%,rgba(255,106,53,.16),transparent 62%)}
 body>section:first-of-type{z-index:1}
 .animate-on-scroll,.col-anim{animation:none!important;animation-play-state:running!important;opacity:1!important;transform:none!important;filter:none!important;clip-path:none!important}
-body>section:first-of-type>.z-10>div.flex>button{min-width:260px!important;padding-inline:28px!important;flex:0 0 auto;overflow:hidden}
+body>div.fixed{padding:24px 48px 0!important}
+body>div.fixed>nav{width:100%!important;max-width:none!important;padding:8px 0!important;gap:32px!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+body>div.fixed>nav::before,body>div.fixed>nav::after{display:none!important}
+body>div.fixed>nav>div.hidden{gap:32px!important}
+body>div.fixed>nav,body>div.fixed>nav *,body>section:first-of-type,body>section:first-of-type *{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important}
+body>section:first-of-type{min-height:100svh!important;padding:112px 32px 48px!important;justify-content:center!important}
+body>section:first-of-type>.z-10{width:100%;max-width:1080px!important;margin:0 auto!important;padding:0!important}
+body>section:first-of-type>.z-10>div:first-child{margin-bottom:32px!important;padding:8px 20px!important}
+body>section:first-of-type h1{margin-bottom:40px!important;line-height:1.08!important;letter-spacing:-.035em!important;row-gap:8px!important}
+body>section:first-of-type h1>span{line-height:1.08!important}
+body>section:first-of-type h1+p{max-width:800px!important;margin:0 auto 40px!important;font-size:24px!important;line-height:1.5!important;font-weight:500!important}
+body>section:first-of-type>.z-10>div.flex{gap:24px!important;margin-bottom:0!important}
+body>section:first-of-type>.z-10>div.flex>button{min-width:260px!important;min-height:48px!important;height:auto!important;padding:12px 24px!important;flex:0 0 auto;overflow:hidden}
+body>section:first-of-type>.z-10>div.flex>button>span[class*="relative"][class*="z-20"]{font-size:14px!important;line-height:20px!important;letter-spacing:.04em!important}
 body>section:first-of-type>.z-10>div.flex>button span{white-space:nowrap}
 .tg-offscreen *{animation-play-state:paused!important}
-@media(max-width:640px){body>section:first-of-type>.z-10>div.flex{width:100%}body>section:first-of-type>.z-10>div.flex>button{width:100%;min-width:0!important;max-width:360px}}
+@media(max-width:767px){body>div.fixed{padding:16px 24px 0!important}body>div.fixed>nav{gap:16px!important}body>section:first-of-type{padding:104px 24px 40px!important}body>section:first-of-type h1{font-size:56px!important;line-height:1.1!important}body>section:first-of-type h1>span{line-height:1.1!important}body>section:first-of-type h1+p{font-size:20px!important;line-height:1.5!important}body>section:first-of-type>.z-10>div.flex{width:100%;gap:16px!important}body>section:first-of-type>.z-10>div.flex>button{width:100%;min-width:0!important;max-width:360px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.tg-offscreen *{animation:none!important}}
 </style>`;
 
