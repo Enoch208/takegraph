@@ -12,7 +12,7 @@ export default async function LandingPage() {
   return (
     <main id="main" className="h-dvh w-full overflow-hidden bg-black">
       <iframe
-        title="Creative landing page"
+        title="TAKEGRAPH landing page"
         srcDoc={landingTemplateHtml(proof)}
         className="block h-full w-full border-0 bg-black"
       />

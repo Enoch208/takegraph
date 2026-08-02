@@ -59,13 +59,13 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["CONTACT ME", "SEE CHANGE PROPAGATE"],
     ["Book Call", "Open Live Build"],
     ["Active Projects", "Seed Graph"],
+    ["▲ 12%", proofLabel],
     ["Global deployment across 3 regions.", "Compiled from canonical source, policy, and dependency inputs."],
     ["Client Retention", "Impact Preview"],
     ["Based on annual recurring contracts.", `Legal-copy revision · ${proofLabel.toLowerCase()}.`],
     ["View Dashboard", "Preview Impact"],
-    ["Featured Case Study", "Custom image needed"],
     ["Neon Nexus", "ORBIT Hydration"],
-    ["Fintech", "18-node graph"],
+    ["Fintech", data ? `${totalNodes}-node graph` : "Graph unavailable"],
     ["Web App", "16:9 + 9:16"],
     ["2024", "Release v1"],
     [
@@ -76,7 +76,6 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["Digital Strategy", "Selective Rebuilds"],
     ["UI/UX Design", "Quality Gates"],
     ["Development", "Typed Recovery"],
-    ["Brand Identity", "Release Proofs"],
     ["git", "Genblaze"],
     ["Lucidchart", "Backblaze B2"],
     ["wrike", "PostgreSQL"],
@@ -124,7 +123,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["View All Projects", "Inspect Proof"],
     ["Vertex AI", "TEST FAULT recovery"],
     ["Echo Platform", "Identity-gate retake"],
-    ["Product Design", "Rejected attempt preserved"],
+    ["Product Design", "Rejected attempt preserved · custom image needed"],
     ["01. CAPABILITIES", "02. CAPABILITIES"],
     ["Expertise", "System"],
     ["Digital Expertise", "Built for causality"],
@@ -170,15 +169,15 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["Loved by", "Evidence is"],
     ["Everything you need to create, collaborate, and convert. Built for modern teams.", "No invented customer praise: these cards show the actual decisions, failure classes, lineage, and verification facts the demo is designed to prove."],
     ["View Portfolio", "Open Evidence View"],
-    ["This platform completely changed how we approach design systems. The speed and consistency is mind-blowing.", "A legal-copy change invalidates exactly four nodes; fourteen remain valid and are reused."],
-    ["Just shipped my portfolio using the new components. Detail is insane. 🚀", "Every rebuild decision includes a reason code and the upstream fingerprint that changed."],
-    ["Accessibility features saved us weeks. Rare to find a kit this robust.", "A TEST FAULT timeout creates a parent-linked cross-provider child attempt with its routing reason."],
-    ["I've used every UI kit out there. Nothing comes close to the polish and flexibility of this one.", "A failed product-identity attempt stays playable after a bounded retake is created."],
-    ["Finally, a tool that bridges the gap between design and code perfectly.", "Provider output is downloaded, hashed from stored bytes, and written to Backblaze B2 before it can pass."],
-    ["Refactoring legacy apps was daunting until we adopted this system.", "Refreshing mid-build reconstructs the same state from durable events instead of losing progress."],
-    ["We redesigned our entire SaaS dashboard in a weekend. Robust and accessible.", "Publishing records the approver, reason, time, manifest, SHA-256 values, and retention readback."],
-    ["Best investment we made for our design team this year. ROI was immediate.", "Restoring release v1 flips one atomic pointer and makes zero provider calls."],
-    ["I've cancelled 3 other subscriptions. This is the only UI kit I need.", "ERROR is never displayed as PASS, and unavailable generation never silently switches to a fixture."],
+    ['"This platform completely changed how we approach design systems. The speed and consistency is mind-blowing."', data ? `A legal-copy change invalidates exactly ${rebuilt} nodes; ${reused} remain valid and are reused.` : "Impact evidence is unavailable until the control plane responds."],
+    ['"Just shipped my portfolio using the new components. Detail is insane. 🚀"', "Every rebuild decision includes a reason code and the upstream fingerprint that changed."],
+    ['"Accessibility features saved us weeks. Rare to find a kit this robust."', "A TEST FAULT timeout creates a parent-linked cross-provider child attempt with its routing reason."],
+    ['"I\'ve used every UI kit out there. Nothing comes close to the polish and flexibility of this one."', "A failed product-identity attempt stays playable after a bounded retake is created."],
+    ['"Finally, a tool that bridges the gap between design and code perfectly."', "Provider output is downloaded, hashed from stored bytes, and written to Backblaze B2 before it can pass."],
+    ['"Refactoring legacy apps was daunting until we adopted this system."', "Refreshing mid-build reconstructs the same state from durable events instead of losing progress."],
+    ['"We redesigned our entire SaaS dashboard in a weekend. Robust and accessible."', "Publishing records the approver, reason, time, manifest, SHA-256 values, and retention readback."],
+    ['"Best investment we made for our design team this year. ROI was immediate."', "Restoring release v1 flips one atomic pointer and makes zero provider calls."],
+    ['"I\'ve cancelled 3 other subscriptions. This is the only UI kit I need."', "ERROR is never displayed as PASS, and unavailable generation never silently switches to a fixture."],
     ["Sarah Jenkins", "IMPACT_PLAN_CREATED"],
     ["Marcus T.", "NODE_REUSED"],
     ["Michael Chen", "ATTEMPT_FAILED"],
@@ -199,7 +198,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["Get Started", "Open Live Build"],
     ["What's included", "What it proves"],
     ["45 hours of dedicated design time", "Canonicalization and fingerprint determinism"],
-    ["Two active projects at a time", "Golden 14 reuse / 4 rebuild impact test"],
+    ["Two active projects at a time", data ? `Golden ${reused} reuse / ${rebuilt} rebuild impact test` : "Golden impact test · control plane unavailable"],
     ["Twice-weekly syncs", "Cycle rejection and reason-code coverage"],
     ["24-hour response time", "Failure injection scoped to the demo project"],
     ["Scale", "Live Build"],
@@ -216,12 +215,12 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["Book a Call", "Inspect Release"],
     ["Sarah Park", "Release manifest"],
     ["Project Manager", "SHA-256 · APPROVAL · RETENTION"],
-    ["We'll help you choose the right plan and get you started within 3-5 days.", "Verify stored assets, approval history, manifest integrity, and the currently published release pointer."],
+    ['"We\'ll help you choose the right plan and get you started within 3-5 days."', "Verify stored assets, approval history, manifest integrity, and the currently published release pointer."],
     ["2 spots left for", "Status read back from"],
     ["July", "B2"],
     ["Ready to launch your", "Ready to change one"],
     ["vision?", "detail?"],
-    ["I work with brands that believe in quality design. Let's build something amazing together.", "Open the seeded ORBIT production, edit one approved line, and watch TAKEGRAPH preserve fourteen valid nodes."],
+    ["I work with brands that believe in quality design. Let's build something amazing together.", data ? `Open the seeded ORBIT production, edit one approved line, and watch TAKEGRAPH preserve ${reused} valid nodes.` : "Open the seeded ORBIT production once the control plane is available and inspect every reuse or rebuild decision."],
     ["Project Type / Budget", "Production / template"],
     ["Anything we should know?", "What needs to stay consistent?"],
     ["Start Conversation", "Open Live Build"],
@@ -237,7 +236,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["PRICING", "OPERATING MODES"],
     ["CONTACT", "LIVE BUILD"],
     ["PRIVACY POLICY", "PRIVACY"],
-    ["TERMS & CONDITIONS", "TERMS"],
+    ["TERMS &amp; CONDITIONS", "TERMS"],
     ["CREATIVE", "TAKEGRAPH"],
     ["Creative Team", "TAKEGRAPH"],
     ["Made with love by", "Built to cause, remember, and verify by"],
@@ -245,12 +244,17 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
   ];
 
   let adapted = replaceTextNodeOnce(source, "Design", "Change");
+  adapted = replaceTextNodeOnce(adapted, "Brand Identity", "Release Proofs");
+  adapted = replaceTextNodeOnce(adapted, "Brand Identity", "Cross-provider lineage · custom image needed");
+  adapted = replaceTextNodeOnce(adapted, "Brand Identity", "Deterministic Fingerprints");
+  adapted = replaceTextNodeOnce(adapted, "Featured Case Study", "CUSTOM IMAGE NEEDED");
+  adapted = replaceTextNodeOnce(adapted, "Featured Case Study", proofLabel);
   for (const [from, to] of replacements) adapted = replaceTextNode(adapted, from, to);
 
   const numberReplacements: ReadonlyArray<readonly [string, string]> = [
     ["24", totalNodes],
     ["98", reused],
-    [".4%", ` / ${totalNodes}`],
+    [".4%", " REUSED"],
     ["142", totalNodes],
     ["28", reused],
     ["4", rebuilt],
@@ -271,8 +275,13 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
   adapted = adapted
     .replace(/https:\/\/images\.unsplash\.com\/photo-[^"']+\?w=(?:100|150)&amp;h=(?:100|150)&amp;fit=crop/g, "/brand/mark.png")
     .replace(/alt=["'](?:Sarah|Marcus|Michael|Sofia|David|Alex|Profile)["']/g, 'alt="TAKEGRAPH build evidence"')
-    .replace(/\s+onclick=["']updatePricing\([^"']+\)["']/g, "")
+    .replace('alt="Agency Hero"', 'alt="Placeholder for the ORBIT cinematic master"')
+    .replace('alt="Dark abstract gradient"', 'alt="Placeholder for cross-provider fallback evidence"')
+    .replace('alt="Abstract architectural forms"', 'alt="Placeholder for identity-gate retake evidence"')
+    .replace(/\s+onclick="updatePricing\([^"]+\)"/g, "")
     .replace(/<script>\s*function updatePricing\([\s\S]*?<\/script>/i, "")
+    .replace("window.location.href='/home'", "window.parent.location.href='/'")
+    .replace("window.location.href='/bookcall'", "window.parent.location.href='/demo'")
     .replace('href="/work"', 'href="#proof"')
     .replace('href="/services"', 'href="#capabilities"')
     .replace('href="/about"', 'href="#workflow"')
@@ -282,10 +291,21 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     .replace("03. HOW IT WORKS", '<span id="workflow">03. HOW IT WORKS</span>')
     .replace("04. BUILD EVIDENCE", '<span id="evidence">04. BUILD EVIDENCE</span>')
     .replace("05. OPERATING MODES", '<span id="modes">05. OPERATING MODES</span>')
-    .replace("<head>", '<head><base target="_parent">')
+    .replace(
+      /(<h2[^>]*>)\s*Real\s*<span[^>]*>\s*ORBIT\s*<\/span>\s*(<\/h2>)/i,
+      "$1A build you can interrupt.$2",
+    )
+    .replace(
+      /(<h2[^>]*>)\s*Digital\s*<span[^>]*>\s*System\s*<\/span>\s*(<\/h2>)/i,
+      "$1Built for causality$2",
+    )
+    .replace(
+      /(<h2[^>]*>)\s*How We\s*<span[^>]*>\s*Product\s*<\/span>\s*(<\/h2>)/i,
+      "$1From change to proof$2",
+    )
     .replace(
       "</body>",
-      `<script>document.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;var label=(button.textContent||"").replace(/\\s+/g," ").trim().toUpperCase();if(["OPEN LIVE BUILD","PREVIEW IMPACT","OPEN ORBIT BUILD"].includes(label)){window.parent.location.href="/demo";}});</script></body>`,
+      `<script>document.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;var label=(button.textContent||"").replace(/\\s+/g," ").trim().toUpperCase();var demo=["OPEN LIVE BUILD","PREVIEW IMPACT","OPEN ORBIT BUILD","MORE","OPEN EVIDENCE VIEW","INSPECT RELEASE"];var sections={"SEE CHANGE PROPAGATE":"workflow","WATCH BUILD FLOW":"workflow","EXPLORE ARCHITECTURE":"capabilities","LINEAGE":"evidence","MANIFEST":"evidence","INSPECT PROOF":"evidence"};if(demo.includes(label)){window.parent.location.href="/demo";return;}if(sections[label]){document.getElementById(sections[label])?.scrollIntoView({behavior:"smooth",block:"start"});return;}if(["LOCAL","DETERMINISTIC","CONFIRM BUILD","PREVIEW ONLY"].includes(label)){event.preventDefault();button.disabled=true;button.setAttribute("aria-disabled","true");}});</script></body>`,
     );
 
   return adapted;
