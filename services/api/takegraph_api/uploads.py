@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import os
 import re
@@ -18,6 +19,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from takegraph_domain.auth import Permission, Principal, authorize_project
+from takegraph_domain.canonical import JsonValue, canonical_hash, canonical_payload
 from takegraph_domain.enums import TriggerSource
 from takegraph_domain.errors import (
     AssetVerificationError,
@@ -40,6 +42,7 @@ from takegraph_api.db.models import (
     Asset,
     B2ObjectEvent,
     Project,
+    ProjectRevision,
     Source,
     SourceVersion,
     UploadIntent,
@@ -197,7 +200,7 @@ class SourceUploadService:
         intent = result.scalar_one_or_none()
         if intent is None or intent.project_id != project_id:
             raise NotFoundError("Upload intent was not found.")
-        project = await self._project(project_id)
+        project = await self._project(project_id, lock=True)
         authorize_project(
             principal,
             project_id=project.id,
@@ -276,12 +279,19 @@ class SourceUploadService:
             stable_key=intent.source_stable_key,
             media_kind=probe.media_kind,
         )
+        revision_id = await self._create_project_revision(
+            project=project,
+            source_stable_key=intent.source_stable_key,
+            digest=digest,
+            media_kind=probe.media_kind,
+            actor_id=principal.actor_id,
+        )
         source_version_id = uuid.uuid4()
         self._session.add(
             SourceVersion(
                 id=source_version_id,
                 source_id=source_id,
-                revision_id=None,
+                revision_id=revision_id,
                 asset_id=asset_id,
                 normalized_text=None,
                 content_hash=digest,
@@ -333,11 +343,58 @@ class SourceUploadService:
             media_kind=probe.media_kind,
         )
 
-    async def _project(self, project_id: uuid.UUID) -> Project:
-        project = await self._session.get(Project, project_id)
+    async def _project(self, project_id: uuid.UUID, *, lock: bool = False) -> Project:
+        statement = select(Project).where(Project.id == project_id)
+        if lock:
+            statement = statement.with_for_update()
+        project = await self._session.scalar(statement)
         if project is None:
             raise NotFoundError("Project was not found.")
         return project
+
+    async def _create_project_revision(
+        self,
+        *,
+        project: Project,
+        source_stable_key: str,
+        digest: str,
+        media_kind: str,
+        actor_id: uuid.UUID,
+    ) -> uuid.UUID:
+        parent: ProjectRevision | None = None
+        if project.active_revision_id is not None:
+            parent = await self._session.get(ProjectRevision, project.active_revision_id)
+            if parent is None:
+                raise InvalidSourceError("Project active revision cannot be resolved.")
+        base_spec: dict[str, JsonValue] = (
+            copy.deepcopy(parent.spec_json) if parent is not None else {}
+        )
+        sources = base_spec.setdefault("sources", {})
+        if not isinstance(sources, dict):
+            raise InvalidSourceError("Project revision sources field is invalid.")
+        sources[source_stable_key] = {
+            "sha256": digest,
+            "media_kind": media_kind,
+        }
+        canonical_payload(base_spec)
+        revision_hash = canonical_hash(base_spec)
+        if parent is not None and parent.canonical_hash == revision_hash:
+            return parent.id
+        revision_id = uuid.uuid4()
+        self._session.add(
+            ProjectRevision(
+                id=revision_id,
+                project_id=project.id,
+                revision_no=1 if parent is None else parent.revision_no + 1,
+                parent_revision_id=None if parent is None else parent.id,
+                spec_json=base_spec,
+                canonical_hash=revision_hash,
+                created_by=actor_id,
+            )
+        )
+        project.active_revision_id = revision_id
+        project.version += 1
+        return revision_id
 
     async def _upsert_asset(
         self,

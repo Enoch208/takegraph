@@ -92,5 +92,3 @@ def downgrade() -> None:
     op.drop_index("ix_upload_intents_status_expires", table_name="upload_intents")
     op.drop_table("upload_intents")
     # ### end Alembic commands ###
-
-

@@ -92,6 +92,9 @@ async def project_context(session):
     )
     await session.execute(text("delete from sources where project_id=:id"), {"id": project_id})
     await session.execute(
+        text("delete from project_revisions where project_id=:id"), {"id": project_id}
+    )
+    await session.execute(
         text("delete from assets where organization_id=:id"), {"id": organization_id}
     )
     await session.execute(text("delete from projects where id=:id"), {"id": project_id})
@@ -161,6 +164,13 @@ class TestSourceUploadRoundTrip:
         assert completed.media_kind == "IMAGE"
         assert await session.scalar(text("select count(*) from assets")) == 1
         assert await session.scalar(text("select count(*) from source_versions")) == 1
+        assert await session.scalar(text("select count(*) from project_revisions")) == 1
+        assert (
+            await session.scalar(
+                text("select count(*) from source_versions where revision_id is not null")
+            )
+            == 1
+        )
         assert (
             await session.scalar(
                 text(

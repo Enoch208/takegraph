@@ -33,12 +33,12 @@ migrate: ## Apply database migrations
 check: lint typecheck test ## Format check, lint, types and tests
 
 lint: ## Ruff lint and format check
-	uv run ruff check .
-	uv run ruff format --check .
+	uv run ruff check packages services scripts infra
+	uv run ruff format --check packages services scripts infra
 
 fmt: ## Apply formatting
-	uv run ruff format .
-	uv run ruff check --fix .
+	uv run ruff format packages services scripts infra
+	uv run ruff check --fix packages services scripts infra
 
 typecheck: ## Strict type checking, both toolchains
 	uv run mypy packages/domain/takegraph_domain packages/infrastructure/takegraph_infrastructure services/api/takegraph_api services/worker/takegraph_worker scripts/doctor.py

@@ -154,7 +154,9 @@ class SourceVersion(Base):
 
     id: Mapped[UuidPk]
     source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id", ondelete="RESTRICT"))
-    revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("project_revisions.id", ondelete="RESTRICT")
+    )
     asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"))
     normalized_text: Mapped[str | None] = mapped_column(Text)
     content_hash: Mapped[Sha256]
