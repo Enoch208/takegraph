@@ -12,6 +12,28 @@ function readTemplateCode(): string {
 
 const templateCode = readTemplateCode();
 
+const HERO_DEPENDENCY_GRAPH = `<div id="tg-hero-graph" aria-hidden="true"><svg viewBox="0 0 1440 820" preserveAspectRatio="xMidYMid slice" role="presentation"><g class="tg-base-edges"><path d="M90 280 C220 280 210 170 350 170"/><path d="M90 280 C230 280 220 330 350 330"/><path d="M90 510 C220 510 220 430 350 430"/><path d="M350 170 C500 170 490 110 630 110"/><path d="M350 170 C500 170 490 215 630 215"/><path d="M350 330 C500 330 490 320 630 320"/><path d="M350 430 C500 430 490 425 630 425"/><path d="M630 110 C790 110 780 155 930 155"/><path d="M630 215 C790 215 780 255 930 255"/><path d="M630 320 C790 320 780 355 930 355"/><path d="M630 425 C790 425 780 455 930 455"/><path d="M930 155 C1090 155 1080 320 1230 320"/><path d="M930 255 C1090 255 1080 340 1230 340"/><path d="M930 355 C1090 355 1080 360 1230 360"/><path d="M930 455 C1090 455 1080 380 1230 380"/></g><g class="tg-reused-edges"><path d="M90 280 C220 280 210 170 350 170"/><path d="M350 170 C500 170 490 110 630 110"/><path d="M350 170 C500 170 490 215 630 215"/><path d="M630 110 C790 110 780 155 930 155"/><path d="M630 215 C790 215 780 255 930 255"/></g><g class="tg-affected-edges"><path pathLength="1" d="M90 510 C220 510 220 430 350 430"/><path pathLength="1" d="M350 430 C500 430 490 425 630 425"/><path pathLength="1" d="M630 425 C790 425 780 455 930 455"/><path pathLength="1" d="M930 455 C1090 455 1080 380 1230 380"/></g><g class="tg-nodes"><circle class="tg-node-reused" cx="90" cy="280" r="5"/><circle class="tg-node-review" cx="90" cy="510" r="6"/><circle class="tg-node-reused" cx="350" cy="170" r="5"/><circle class="tg-node-reused" cx="350" cy="330" r="5"/><circle class="tg-node-affected" cx="350" cy="430" r="7"/><circle class="tg-node-reused" cx="630" cy="110" r="5"/><circle class="tg-node-reused" cx="630" cy="215" r="5"/><circle class="tg-node-running" cx="630" cy="320" r="6"/><circle class="tg-node-affected" cx="630" cy="425" r="7"/><circle class="tg-node-reused" cx="930" cy="155" r="5"/><circle class="tg-node-reused" cx="930" cy="255" r="5"/><circle class="tg-node-running" cx="930" cy="355" r="6"/><circle class="tg-node-affected" cx="930" cy="455" r="7"/><circle class="tg-node-affected" cx="1230" cy="380" r="8"/></g></svg></div>`;
+
+const LANDING_PERFORMANCE_HEAD = `<link rel="icon" href="/icon.png" type="image/png"><style id="takegraph-performance">
+html{scroll-behavior:smooth;scroll-padding-top:112px;background:#050608}
+body{position:relative;overscroll-behavior-y:none;background:#050608!important}
+.gradient-blur>div,.gradient-blur::before,.gradient-blur::after{display:none!important}
+.gradient-blur{background:linear-gradient(to bottom,rgba(5,6,8,.88),rgba(5,6,8,.3),transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);mask-image:linear-gradient(to bottom,black 0%,black 42%,transparent 100%)}
+[data-us-project="sajpUiTp7MIKdX6daDCu"]{opacity:.26!important}
+#tg-hero-graph{position:absolute;inset:0 0 auto;width:100%;height:880px;z-index:0;pointer-events:none;overflow:hidden;opacity:.72;mix-blend-mode:screen;mask-image:radial-gradient(ellipse 82% 72% at 50% 38%,black 18%,transparent 82%)}
+#tg-hero-graph svg{width:100%;height:100%}
+#tg-hero-graph path{fill:none;vector-effect:non-scaling-stroke}
+.tg-base-edges path{stroke:#2A3039;stroke-width:1}
+.tg-reused-edges path{stroke:#39D98A;stroke-width:1.15;opacity:.36}
+.tg-affected-edges path{stroke:#FF6A35;stroke-width:2;stroke-linecap:round;stroke-dasharray:.045 .955;animation:tgGraphFlow 3.8s linear infinite;filter:drop-shadow(0 0 5px rgba(255,106,53,.7))}
+.tg-nodes circle{stroke:#050608;stroke-width:2;vector-effect:non-scaling-stroke}
+.tg-node-reused{fill:#39D98A}.tg-node-running{fill:#67A7FF}.tg-node-review{fill:#F5C451}.tg-node-affected{fill:#FF6A35;filter:drop-shadow(0 0 7px rgba(255,106,53,.8))}
+body>section:not(:first-of-type),body>footer{content-visibility:auto;contain-intrinsic-size:auto 900px}
+.tg-offscreen *{animation-play-state:paused!important}
+@keyframes tgGraphFlow{to{stroke-dashoffset:-1}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.tg-offscreen *{animation:none!important}.tg-affected-edges path{animation:none;stroke-dasharray:none;opacity:.8}}
+</style>`;
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -62,7 +84,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["excellence", "changed."],
     [
       "Crafting digital experiences that merge art and technology. From branding to web development, I build it all.",
-      "TAKEGRAPH keeps multimodel media productions consistent, recoverable, and verifiable—preserving valid work and rebuilding only what a change actually invalidates.",
+      "TAKEGRAPH keeps multimodel media productions consistent, recoverable, and verifiable.",
     ],
     ["VIEW PORTFOLIO", "OPEN LIVE BUILD"],
     ["CONTACT ME", "SEE CHANGE PROPAGATE"],
@@ -82,9 +104,9 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
       "A cinematic hydration launch package with every source, attempt, quality decision, stored byte, and release asset connected by lineage.",
     ],
     ["Capabilities Index", "Build Capabilities"],
-    ["Digital Strategy", "Selective Rebuilds"],
-    ["UI/UX Design", "Quality Gates"],
-    ["Development", "Typed Recovery"],
+    ["Digital Strategy", "Generate"],
+    ["UI/UX Design", "Validate"],
+    ["Development", "Recover"],
     ["git", "Genblaze"],
     ["Lucidchart", "Backblaze B2"],
     ["wrike", "PostgreSQL"],
@@ -156,7 +178,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["Growth Rate", "Reuse ratio"],
     ["02. HOW IT WORKS", "03. HOW IT WORKS"],
     ["Work", "Product"],
-    ["Services", "Workflow"],
+    ["Services", "How It Works"],
     ["About", "Architecture"],
     ["Pricing", "Proof"],
     ["How We Work", "From change to proof"],
@@ -236,7 +258,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     ["We offer clarity and collaboration tools to help teams effectively plan, track, and launch digital products.", "Selective rebuilding, durable recovery, quality evidence, and verifiable releases for multimodel media production."],
     ["Map", "Product"],
     ["FEATURES", "CAPABILITIES"],
-    ["SERVICES", "WORKFLOW"],
+    ["SERVICES", "HOW IT WORKS"],
     ["REVIEWS", "BUILD EVIDENCE"],
     ["FAQS", "SYSTEM STATUS"],
     ["Company", "Demo"],
@@ -253,7 +275,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
   ];
 
   let adapted = replaceTextNodeOnce(source, "Design", "Change");
-  adapted = replaceTextNodeOnce(adapted, "Brand Identity", "Release Proofs");
+  adapted = replaceTextNodeOnce(adapted, "Brand Identity", "Release");
   adapted = replaceTextNodeOnce(adapted, "Brand Identity", "Cross-provider lineage · custom image needed");
   adapted = replaceTextNodeOnce(adapted, "Brand Identity", "Deterministic Fingerprints");
   adapted = replaceTextNodeOnce(adapted, "Featured Case Study", "CUSTOM IMAGE NEEDED");
@@ -296,6 +318,18 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
       /<style>\s*\/\* Default: paused \*\/[\s\S]*?\.animate-on-scroll\.animate \{ animation-play-state: running !important; \}\s*<\/style>/g,
       "",
     )
+    .replaceAll("#ef233c", "#FF6A35")
+    .replaceAll("#dc2626", "#FF6A35")
+    .replaceAll("#d90429", "#FF6A35")
+    .replaceAll("rgba(239,35,60", "rgba(255,106,53")
+    .replaceAll("rgba(239, 35, 60", "rgba(255, 106, 53")
+    .replaceAll("rgba(220,38,38", "rgba(255,106,53")
+    .replaceAll("rgba(220, 38, 38", "rgba(255, 106, 53")
+    .replaceAll("red-600", "[#FF6A35]")
+    .replaceAll("red-500", "[#FF6A35]")
+    .replaceAll("red-200", "[#FFD7C8]")
+    .replaceAll("red-100", "[#FFD7C8]")
+    .replace(/(<body[^>]*>)/i, `$1${HERO_DEPENDENCY_GRAPH}`)
     .replace(/https:\/\/images\.unsplash\.com\/photo-[^"']+\?w=(?:100|150)&amp;h=(?:100|150)&amp;fit=crop/g, "/brand/mark.png")
     .replace(/alt=["'](?:Sarah|Marcus|Michael|Sofia|David|Alex|Profile)["']/g, 'alt="TAKEGRAPH build evidence"')
     .replace('alt="Agency Hero"', 'alt="Placeholder for the ORBIT cinematic master"')
@@ -306,8 +340,8 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     .replace("window.location.href='/home'", "window.parent.location.href='/'")
     .replace("window.location.href='/bookcall'", "window.parent.location.href='/demo'")
     .replace('href="/work"', 'href="#proof"')
-    .replace('href="/services"', 'href="#capabilities"')
-    .replace('href="/about"', 'href="#workflow"')
+    .replace('href="/services"', 'href="#workflow"')
+    .replace('href="/about"', 'href="#capabilities"')
     .replace('href="/pricing"', 'href="#evidence"')
     .replace("01. LIVE BUILD", '<span id="proof">01. LIVE BUILD</span>')
     .replace("02. CAPABILITIES", '<span id="capabilities">02. CAPABILITIES</span>')
@@ -328,7 +362,7 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
     )
     .replace(
       "</head>",
-      `<link rel="icon" href="/icon.png" type="image/png"><style id="takegraph-performance">html{scroll-behavior:smooth;scroll-padding-top:112px}body{overscroll-behavior-y:none}.gradient-blur>div,.gradient-blur::before,.gradient-blur::after{display:none!important}.gradient-blur{background:linear-gradient(to bottom,rgba(0,0,0,.82),rgba(0,0,0,.28),transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);mask-image:linear-gradient(to bottom,black 0%,black 42%,transparent 100%)}body>section:not(:first-of-type),body>footer{content-visibility:auto;contain-intrinsic-size:auto 900px}.tg-offscreen *{animation-play-state:paused!important}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.tg-offscreen *{animation:none!important}}</style></head>`,
+      `${LANDING_PERFORMANCE_HEAD}</head>`,
     )
     .replace(
       "</body>",
