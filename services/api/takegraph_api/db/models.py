@@ -27,6 +27,7 @@ from typing import Any
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -280,7 +281,7 @@ class ChangeSet(Base):
     patch_json: Mapped[Json]
     status: Mapped[str] = mapped_column(String(16), default="DRAFT")
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    expires_at: Mapped[datetime | None] = mapped_column()
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[CreatedAt]
 
 
@@ -299,7 +300,7 @@ class ImpactPlanRow(Base):
     )
     plan_json: Mapped[Json]
     plan_hash: Mapped[str] = mapped_column(String(64), unique=True)
-    expires_at: Mapped[datetime | None] = mapped_column()
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[CreatedAt]
 
 
@@ -333,9 +334,9 @@ class Build(Base):
     """§14.7 keeps provider-reported cost separate from our estimate; the UI
     labels which is which."""
     is_fixture: Mapped[bool] = mapped_column(Boolean, default=False)
-    cancel_requested_at: Mapped[datetime | None] = mapped_column()
-    started_at: Mapped[datetime | None] = mapped_column()
-    completed_at: Mapped[datetime | None] = mapped_column()
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[Version]
     created_at: Mapped[CreatedAt]
 
@@ -365,8 +366,8 @@ class BuildNode(Base):
     selected_asset_set_hash: Mapped[str | None] = mapped_column(String(64))
     reuse_proof_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     """§12.3 requires the proof to be persisted, not merely computed."""
-    started_at: Mapped[datetime | None] = mapped_column()
-    completed_at: Mapped[datetime | None] = mapped_column()
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[Version]
     created_at: Mapped[CreatedAt]
 
@@ -404,8 +405,8 @@ class Attempt(Base):
     estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
     provider_reported_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(14, 6))
     latency_ms: Mapped[int | None] = mapped_column(Integer)
-    submitted_at: Mapped[datetime | None] = mapped_column()
-    completed_at: Mapped[datetime | None] = mapped_column()
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[CreatedAt]
 
 
@@ -436,7 +437,7 @@ class Asset(Base):
     derived_from_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     """§5.7 FR-ASSET-005: thumbnails and proxies reference their source rather
     than replacing it."""
-    verified_at: Mapped[datetime | None] = mapped_column()
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     """§8.3.6: not durable until a B2 HEAD confirmed expected size and metadata."""
     created_at: Mapped[CreatedAt]
 
@@ -510,12 +511,12 @@ class Release(Base):
     manifest_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     verification_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    approved_at: Mapped[datetime | None] = mapped_column()
-    published_at: Mapped[datetime | None] = mapped_column()
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retention_mode: Mapped[str | None] = mapped_column(String(24))
     """§15.5: read back from B2 after publication, or explicitly NOT_CONFIGURED.
     Never assumed."""
-    retain_until: Mapped[datetime | None] = mapped_column()
+    retain_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[CreatedAt]
 
 
@@ -571,7 +572,7 @@ class WorkItem(Base):
     priority: Mapped[int] = mapped_column(Integer, default=0)
     available_at: Mapped[CreatedAt]
     lease_owner: Mapped[str | None] = mapped_column(String(64))
-    lease_expires_at: Mapped[datetime | None] = mapped_column()
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=5)
     dedupe_key: Mapped[str] = mapped_column(String(128))
@@ -610,7 +611,7 @@ class DomainEvent(Base):
     payload_json: Mapped[Json]
     correlation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     occurred_at: Mapped[CreatedAt]
-    realtime_published_at: Mapped[datetime | None] = mapped_column()
+    realtime_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AttemptEvent(Base):
@@ -625,7 +626,7 @@ class AttemptEvent(Base):
     provider_event_type: Mapped[str] = mapped_column(String(64))
     provider_event_json: Mapped[Json]
     received_at: Mapped[CreatedAt]
-    provider_timestamp: Mapped[datetime | None] = mapped_column()
+    provider_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AuditLog(Base):
@@ -668,7 +669,7 @@ class B2WebhookMessage(Base):
     body_sha256: Mapped[Sha256]
     signature_valid: Mapped[bool] = mapped_column(Boolean)
     received_at: Mapped[CreatedAt]
-    processed_at: Mapped[datetime | None] = mapped_column()
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
 
 
@@ -689,7 +690,7 @@ class B2ObjectEvent(Base):
     object_key: Mapped[str] = mapped_column(String(1024))
     object_version_id: Mapped[str | None] = mapped_column(String(128))
     object_size: Mapped[int | None] = mapped_column(Integer)
-    event_timestamp: Mapped[datetime | None] = mapped_column()
+    event_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), default="RECEIVED")
     trigger_source: Mapped[str] = mapped_column(String(24), default="B2_EVENT")
     """§15.4: the UI must not claim a B2 event triggered work the internal
@@ -707,6 +708,6 @@ class FaultRule(Base):
     node_stable_key: Mapped[str] = mapped_column(String(128))
     fault_type: Mapped[str] = mapped_column(String(32))
     remaining_uses: Mapped[int] = mapped_column(Integer, default=1)
-    expires_at: Mapped[datetime | None] = mapped_column()
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[CreatedAt]

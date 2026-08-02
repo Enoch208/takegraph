@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from takegraph_domain.enums import ApiErrorCode, CapabilityState
 from takegraph_domain.errors import DomainError
 
+from takegraph_api.b2_webhooks import router as b2_webhook_router
 from takegraph_api.projection import DemoProof, build_demo_proof
 
 API_PREFIX = "/api/v1"
@@ -27,6 +28,7 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
+app.include_router(b2_webhook_router)
 
 
 @app.middleware("http")
@@ -54,6 +56,7 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
         ApiErrorCode.IMPACT_PLAN_STALE: 409,
         ApiErrorCode.IDEMPOTENCY_CONFLICT: 409,
         ApiErrorCode.RATE_LIMITED: 429,
+        ApiErrorCode.B2_SIGNATURE_INVALID: 401,
         ApiErrorCode.FEATURE_NOT_CONFIGURED: 503,
     }.get(exc.error_code, 400 if exc.error_code != ApiErrorCode.INTERNAL_ERROR else 500)
 

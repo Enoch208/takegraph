@@ -75,6 +75,18 @@ class AssetVerificationError(DomainError):
     error_code = ApiErrorCode.ASSET_VERIFICATION_FAILED
 
 
+class B2SignatureInvalidError(DomainError):
+    """The B2 webhook signature was missing, malformed, unsupported, or wrong."""
+
+    error_code = ApiErrorCode.B2_SIGNATURE_INVALID
+
+
+class InvalidSourceError(DomainError):
+    """Source or upload input failed structured validation."""
+
+    error_code = ApiErrorCode.INVALID_SOURCE
+
+
 class FeatureNotConfiguredError(DomainError):
     """§24.5: a missing credential disables a capability explicitly. It never
     silently degrades to a fixture."""
