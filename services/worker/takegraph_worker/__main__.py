@@ -14,6 +14,8 @@ from takegraph_api.b2_reconciliation import B2UploadReconciler
 from takegraph_api.db.session import dispose_engine, get_session_factory
 from takegraph_infrastructure.b2 import B2Settings, B2Store
 
+from takegraph_worker.gmi_gateway import GMICloudGateway, GMICloudSettings
+from takegraph_worker.gmi_work import GMIWorkHandlers
 from takegraph_worker.runtime import WorkerRuntime
 
 logger = logging.getLogger("takegraph.worker")
@@ -51,6 +53,9 @@ async def run() -> None:
     settings = B2Settings.from_env(dict(os.environ))
     store = B2Store(settings, preflight=True)
     factory = get_session_factory()
+    environment = dict(os.environ)
+    gmi_gateway = GMICloudGateway(GMICloudSettings.from_env(environment), settings)
+    gmi_handlers = GMIWorkHandlers(factory, store, gmi_gateway, environment=environment)
     worker_id = os.environ.get("WORKER_ID", "")
     concurrency = _positive_int("WORKER_CONCURRENCY")
     runtime = WorkerRuntime(
@@ -60,6 +65,7 @@ async def run() -> None:
         lease_seconds=_positive_int("WORK_LEASE_SECONDS"),
         heartbeat_seconds=_positive_int("WORK_HEARTBEAT_SECONDS"),
         concurrency=concurrency,
+        gmi_handlers=gmi_handlers,
     )
     reconciliation_interval = _positive_int("RECONCILIATION_INTERVAL_SECONDS")
     next_reconciliation = 0.0

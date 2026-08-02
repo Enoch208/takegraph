@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import hashlib
+import io
+import subprocess
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from PIL import Image, ImageDraw
 from sqlalchemy import select, text, update
 from takegraph_api.db.models import (
     Asset,
@@ -40,6 +45,15 @@ from takegraph_domain.enums import (
     Role,
 )
 from takegraph_domain.execution.idempotency import submission_idempotency_key
+from takegraph_domain.generation import (
+    AttemptRef,
+    CancelResult,
+    DurableGenerationAsset,
+    GenerationEvent,
+    GenerationEventKind,
+    GenerationRequest,
+    ReconciliationResult,
+)
 from takegraph_domain.graph.orbit import (
     DEFAULT_BRIEF_TEXT,
     DEFAULT_LEGAL_LINE,
@@ -48,6 +62,7 @@ from takegraph_domain.graph.orbit import (
     PARAM_LEGAL_LINE,
 )
 from takegraph_infrastructure.b2 import StoredObject
+from takegraph_infrastructure.delivery import DeliveryArtifact, DeliveryInput
 from takegraph_infrastructure.media import MediaProbe
 from takegraph_worker.anthropic_gateway import (
     CopyGenerationRequest,
@@ -61,12 +76,15 @@ from takegraph_worker.anthropic_plan_gateway import (
     ShotPlan,
 )
 from takegraph_worker.build_work import BuildWorkHandlers
+from takegraph_worker.delivery_work import DeliveryWorkHandlers
 from takegraph_worker.elevenlabs_gateway import NarrationRequest, NarrationResult
 from takegraph_worker.elevenlabs_music_gateway import (
     MusicGenerationRequest,
     MusicGenerationResult,
 )
 from takegraph_worker.end_card_work import EndCardWorkHandlers
+from takegraph_worker.gmi_work import GMIWorkHandlers
+from takegraph_worker.local_image_work import LocalImageWorkHandlers
 from takegraph_worker.music_work import MusicWorkHandlers
 from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.plan_work import PlanWorkHandlers
@@ -75,6 +93,19 @@ from takegraph_worker.runtime import WorkerRuntime
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+
+
+def _product_png() -> bytes:
+    image = Image.new("RGB", (240, 320), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((80, 30, 160, 290), radius=24, fill="#111820")
+    draw.rectangle((93, 118, 147, 205), fill="#F5F7FA")
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+PRODUCT_PNG = _product_png()
 
 
 class MemoryStore:
@@ -117,6 +148,10 @@ class MemoryStore:
     def key_from_url(self, url: str) -> str | None:
         prefix = "https://memory.invalid/"
         return url[len(prefix) :] if url.startswith(prefix) else None
+
+    def presign_get(self, key: str, *, ttl_seconds: int = 900) -> str:
+        assert ttl_seconds > 0
+        return f"https://memory.invalid/{key}?temporary=test"
 
 
 class FlakyMusicStore(MemoryStore):
@@ -170,6 +205,88 @@ class FakePlanGenerator:
     async def generate(self, request: PlanGenerationRequest) -> PlanGenerationResult:
         self.calls.append(request)
         return _plan_result(model=request.model)
+
+
+class FakeGMIGateway:
+    def __init__(self, store: MemoryStore, output: bytes = PNG_1X1) -> None:
+        self.store = store
+        self.output = output
+        self.calls: list[GenerationRequest] = []
+
+    async def execute(self, request: GenerationRequest) -> AsyncIterator[GenerationEvent]:
+        self.calls.append(request)
+        digest = hashlib.sha256(self.output).hexdigest()
+        suffix = "png" if request.stable_key.startswith("image.") else "mp4"
+        media_type = "image/png" if suffix == "png" else "video/mp4"
+        key = f"tenants/{request.organization_id}/genblaze/{digest}.{suffix}"
+        self.store.objects[key] = self.output
+        base = {
+            "attempt_id": request.attempt_id,
+            "provider": request.provider,
+            "model": request.model,
+            "run_id": "run_test_gmi",
+        }
+        yield GenerationEvent(kind=GenerationEventKind.RUN_STARTED, **base)
+        yield GenerationEvent(
+            kind=GenerationEventKind.PROVIDER_SUBMITTED,
+            provider_request_id="request_test_gmi",
+            **base,
+        )
+        yield GenerationEvent(
+            kind=GenerationEventKind.PROVIDER_PROGRESS,
+            provider_request_id="request_test_gmi",
+            progress=0.5,
+            **base,
+        )
+        yield GenerationEvent(
+            kind=GenerationEventKind.PROVIDER_COMPLETED,
+            provider_request_id="request_test_gmi",
+            **base,
+        )
+        yield GenerationEvent(
+            kind=GenerationEventKind.STORED,
+            asset=DurableGenerationAsset(
+                asset_id="provider-output",
+                durable_url=f"https://memory.invalid/{key}",
+                media_type=media_type,
+                sha256=digest,
+                size_bytes=len(self.output),
+            ),
+            **base,
+        )
+        yield GenerationEvent(
+            kind=GenerationEventKind.COMPLETED,
+            manifest_hash=digest,
+            **base,
+        )
+
+    async def reconcile(self, attempt: AttemptRef) -> ReconciliationResult:
+        raise AssertionError(f"unexpected reconciliation for {attempt.attempt_id}")
+
+    async def cancel(self, attempt: AttemptRef) -> CancelResult:
+        raise AssertionError(f"unexpected cancellation for {attempt.attempt_id}")
+
+
+class FakeDeliveryComposer:
+    def __init__(self) -> None:
+        self.calls: list[DeliveryInput] = []
+
+    def __call__(self, source: DeliveryInput, *, temp_root) -> tuple[DeliveryArtifact, ...]:
+        assert temp_root.is_absolute()
+        self.calls.append(source)
+        specs = (
+            ("master_16x9", "master_16x9.mp4", "video/mp4", "VIDEO"),
+            ("master_9x16", "master_9x16.mp4", "video/mp4", "VIDEO"),
+            ("final_audio", "final_audio.wav", "audio/wav", "AUDIO"),
+            ("thumbnail_16x9", "thumbnail_16x9.jpg", "image/jpeg", "IMAGE"),
+            ("thumbnail_9x16", "thumbnail_9x16.jpg", "image/jpeg", "IMAGE"),
+            ("captions", "captions.vtt", "text/vtt", "DOCUMENT"),
+            ("report", "report.json", "application/json", "DOCUMENT"),
+        )
+        return tuple(
+            DeliveryArtifact(role, filename, mime, kind, role.encode(), {"verified": True})
+            for role, filename, mime, kind in specs
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -804,9 +921,9 @@ async def test_submitting_narration_is_not_resubmitted_and_requires_review(
 async def test_end_card_composes_verified_product_and_copy_inputs(session, session_factory) -> None:
     seeded = await _seed_incremental_build(session)
     store = MemoryStore()
-    product_sha = hashlib.sha256(PNG_1X1).hexdigest()
+    product_sha = hashlib.sha256(PRODUCT_PNG).hexdigest()
     product_key = f"tenants/{seeded.organization_id}/sources/{product_sha}.png"
-    store.objects[product_key] = PNG_1X1
+    store.objects[product_key] = PRODUCT_PNG
     source_node = await session.scalar(
         select(BuildNode).where(
             BuildNode.build_id == seeded.build_id,
@@ -820,7 +937,7 @@ async def test_end_card_composes_verified_product_and_copy_inputs(session, sessi
         id=uuid.uuid4(),
         organization_id=seeded.organization_id,
         sha256=product_sha,
-        size_bytes=len(PNG_1X1),
+        size_bytes=len(PRODUCT_PNG),
         mime_type="image/png",
         media_kind="IMAGE",
         b2_bucket=store.bucket,
@@ -1198,14 +1315,14 @@ async def _prepare_plan_execution(
     plan_node.selected_asset_set_hash = None
     plan_node.reuse_proof_json = None
 
-    product_sha = hashlib.sha256(PNG_1X1).hexdigest()
+    product_sha = hashlib.sha256(PRODUCT_PNG).hexdigest()
     product_key = f"tenants/{seeded.organization_id}/sources/{product_sha}.png"
-    store.objects[product_key] = PNG_1X1
+    store.objects[product_key] = PRODUCT_PNG
     product_asset = Asset(
         id=uuid.uuid4(),
         organization_id=seeded.organization_id,
         sha256=product_sha,
-        size_bytes=len(PNG_1X1),
+        size_bytes=len(PRODUCT_PNG),
         mime_type="image/png",
         media_kind="IMAGE",
         b2_bucket=store.bucket,
@@ -1336,8 +1453,10 @@ async def test_plan_worker_uses_verified_image_and_schedules_five_children(
         )
         assert receipt.completed == 1, worker_error
         assert len(generator.calls) == 1
-        assert generator.calls[0].product_reference_bytes == PNG_1X1
-        assert generator.calls[0].product_reference_sha256 == hashlib.sha256(PNG_1X1).hexdigest()
+        assert generator.calls[0].product_reference_bytes == PRODUCT_PNG
+        assert (
+            generator.calls[0].product_reference_sha256 == hashlib.sha256(PRODUCT_PNG).hexdigest()
+        )
         assert "Dark graphite set" in generator.calls[0].brief
         session.expire_all()
         node = await session.get(BuildNode, plan_node_id)
@@ -1427,5 +1546,513 @@ async def test_submitting_plan_is_not_resubmitted_and_requires_review(
         assert attempt is not None and attempt.error_code == "AMBIGUOUS_SUBMISSION"
         assert node is not None and node.status == "WAITING_REVIEW"
         assert build is not None and build.status == "WAITING_REVIEW"
+    finally:
+        await _cleanup(session, seeded)
+
+
+def _local_image_runtime(session_factory, store: MemoryStore) -> WorkerRuntime:
+    handlers = LocalImageWorkHandlers(
+        session_factory,
+        store,  # type: ignore[arg-type]
+    )
+    return WorkerRuntime(
+        session_factory,
+        store,  # type: ignore[arg-type]
+        owner="local-image-worker-test",
+        lease_seconds=30,
+        heartbeat_seconds=5,
+        concurrency=1,
+        local_image_handlers=handlers,
+    )
+
+
+async def test_cutout_worker_stores_transparent_png_and_schedules_keyframes(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    try:
+        await _prepare_plan_execution(session, seeded, store)
+        await session.execute(
+            text("delete from work_items where build_id=:build_id"),
+            {"build_id": seeded.build_id},
+        )
+        cutout = await session.scalar(
+            select(BuildNode).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "transform.product_cutout",
+            )
+        )
+        assert cutout is not None
+        cutout_id = cutout.id
+        cutout.status = str(BuildNodeStatus.QUEUED)
+        await session.execute(
+            update(BuildNode)
+            .where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "plan.shots",
+            )
+            .values(status=str(BuildNodeStatus.REUSED))
+        )
+        await WorkQueue(session).enqueue(
+            kind="EXECUTE_BUILD_NODE",
+            target_id=cutout.id,
+            build_id=seeded.build_id,
+            priority=70,
+            dedupe_key=f"execute:cutout:{cutout.id}",
+        )
+        await session.commit()
+
+        receipt = await _local_image_runtime(session_factory, store).run_once()
+
+        assert receipt.completed == 1
+        session.expire_all()
+        node = await session.get(BuildNode, cutout_id)
+        assert node is not None and node.status == "PASSED"
+        selected = await session.scalar(
+            select(Asset)
+            .join(AttemptAsset, AttemptAsset.asset_id == Asset.id)
+            .join(Attempt, Attempt.id == AttemptAsset.attempt_id)
+            .where(Attempt.build_node_id == cutout_id, AttemptAsset.selected.is_(True))
+        )
+        assert selected is not None and selected.metadata_json["has_alpha"] is True
+        with Image.open(io.BytesIO(store.objects[selected.b2_key])) as image:
+            assert image.getchannel("A").getpixel((0, 0)) == 0
+            assert image.getchannel("A").getpixel((120, 160)) > 200
+        queued_keyframes = set(
+            await session.scalars(
+                select(BuildNode.stable_key).where(
+                    BuildNode.build_id == seeded.build_id,
+                    BuildNode.status == str(BuildNodeStatus.QUEUED),
+                    BuildNode.stable_key.like("image.keyframe.%"),
+                )
+            )
+        )
+        assert queued_keyframes == {
+            "image.keyframe.01",
+            "image.keyframe.02",
+            "image.keyframe.03",
+            "image.keyframe.04",
+        }
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def test_poster_worker_combines_selected_product_and_keyframe(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    try:
+        await _prepare_plan_execution(session, seeded, store)
+        await session.execute(
+            text("delete from work_items where build_id=:build_id"),
+            {"build_id": seeded.build_id},
+        )
+        keyframe = await session.scalar(
+            select(BuildNode).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "image.keyframe.01",
+            )
+        )
+        poster = await session.scalar(
+            select(BuildNode).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "image.poster",
+            )
+        )
+        assert keyframe is not None and poster is not None
+        poster_id = poster.id
+        frame_sha = hashlib.sha256(PNG_1X1).hexdigest()
+        frame_key = f"tenants/{seeded.organization_id}/frames/{frame_sha}.png"
+        store.objects[frame_key] = PNG_1X1
+        frame_asset = Asset(
+            id=uuid.uuid4(),
+            organization_id=seeded.organization_id,
+            sha256=frame_sha,
+            size_bytes=len(PNG_1X1),
+            mime_type="image/png",
+            media_kind="IMAGE",
+            b2_bucket=store.bucket,
+            b2_key=frame_key,
+            verified_at=datetime.now(UTC),
+        )
+        frame_attempt = Attempt(
+            id=uuid.uuid4(),
+            build_node_id=keyframe.id,
+            attempt_no=1,
+            mechanism=str(AttemptMechanism.PRIMARY),
+            provider="gmicloud",
+            model="image-model",
+            idempotency_key=canonical_hash({"poster-frame": str(keyframe.id)}),
+            status=str(AttemptStatus.SUCCEEDED),
+        )
+        session.add_all([frame_asset, frame_attempt])
+        await session.flush()
+        session.add(
+            AttemptAsset(
+                id=uuid.uuid4(),
+                attempt_id=frame_attempt.id,
+                asset_id=frame_asset.id,
+                role="primary",
+                ordinal=0,
+                selected=True,
+            )
+        )
+        keyframe.status = str(BuildNodeStatus.PASSED)
+        keyframe.selected_attempt_id = frame_attempt.id
+        keyframe.selected_asset_set_hash = frame_sha
+        poster.status = str(BuildNodeStatus.QUEUED)
+        await WorkQueue(session).enqueue(
+            kind="EXECUTE_BUILD_NODE",
+            target_id=poster.id,
+            build_id=seeded.build_id,
+            priority=40,
+            dedupe_key=f"execute:poster:{poster.id}",
+        )
+        await session.commit()
+
+        receipt = await _local_image_runtime(session_factory, store).run_once()
+
+        assert receipt.completed == 1
+        session.expire_all()
+        node = await session.get(BuildNode, poster_id)
+        assert node is not None and node.status == "PASSED"
+        selected = await session.scalar(
+            select(Asset)
+            .join(AttemptAsset, AttemptAsset.asset_id == Asset.id)
+            .join(Attempt, Attempt.id == AttemptAsset.attempt_id)
+            .where(Attempt.build_node_id == poster_id, AttemptAsset.selected.is_(True))
+        )
+        assert selected is not None
+        assert selected.metadata_json["width"] == 1_080
+        assert selected.metadata_json["height"] == 1_350
+    finally:
+        await _cleanup(session, seeded)
+
+
+def _gmi_runtime(
+    session_factory,
+    store: MemoryStore,
+    gateway: FakeGMIGateway,
+) -> WorkerRuntime:
+    handlers = GMIWorkHandlers(
+        session_factory,
+        store,  # type: ignore[arg-type]
+        gateway,
+        environment={
+            "GMI_IMAGE_MODEL": "test-image-model",
+            "GMI_VIDEO_MODEL": "test-video-model",
+            "GMI_VIDEO_FALLBACK_MODEL": "test-video-fallback",
+        },
+    )
+    return WorkerRuntime(
+        session_factory,
+        store,  # type: ignore[arg-type]
+        owner="gmi-worker-test",
+        lease_seconds=30,
+        heartbeat_seconds=5,
+        concurrency=1,
+        gmi_handlers=handlers,
+    )
+
+
+async def test_keyframe_and_clip_workers_use_gmi_durable_outputs(
+    session, session_factory, tmp_path
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    plan_generator = FakePlanGenerator()
+    gateway = FakeGMIGateway(store)
+    try:
+        plan_node_id, _ = await _prepare_plan_execution(session, seeded, store)
+        plan_receipt = await _plan_runtime(session_factory, store, plan_generator).run_once()
+        assert plan_receipt.completed == 1
+        await session.execute(
+            text("delete from work_items where build_id=:build_id"),
+            {"build_id": seeded.build_id},
+        )
+        cutout = await session.scalar(
+            select(BuildNode).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "transform.product_cutout",
+            )
+        )
+        plan_node = await session.get(BuildNode, plan_node_id)
+        assert cutout is not None and plan_node is not None
+        cutout.status = str(BuildNodeStatus.QUEUED)
+        await WorkQueue(session).enqueue(
+            kind="EXECUTE_BUILD_NODE",
+            target_id=cutout.id,
+            build_id=seeded.build_id,
+            priority=70,
+            dedupe_key=f"execute:cutout:gmi:{cutout.id}",
+        )
+        await session.commit()
+        cutout_receipt = await _local_image_runtime(session_factory, store).run_once()
+        assert cutout_receipt.completed == 1
+
+        session.expire_all()
+        keyframe = await session.scalar(
+            select(BuildNode).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "image.keyframe.01",
+            )
+        )
+        assert keyframe is not None and keyframe.status == "QUEUED"
+        keyframe_id = keyframe.id
+        await session.execute(
+            update(BuildNode)
+            .where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "video.clip.01",
+            )
+            .values(status=str(BuildNodeStatus.PENDING))
+        )
+        await session.execute(
+            text("delete from work_items where build_id=:build_id"),
+            {"build_id": seeded.build_id},
+        )
+        await WorkQueue(session).enqueue(
+            kind="EXECUTE_BUILD_NODE",
+            target_id=keyframe_id,
+            build_id=seeded.build_id,
+            priority=60,
+            dedupe_key=f"execute:keyframe:test:{keyframe_id}",
+        )
+        await session.commit()
+
+        receipt = await _gmi_runtime(session_factory, store, gateway).run_once()
+
+        assert receipt.completed == 1
+        assert len(gateway.calls) == 1
+        request = gateway.calls[0]
+        assert request.stable_key == "image.keyframe.01"
+        assert request.model == "test-image-model"
+        assert len(request.inputs) == 2
+        assert "shot 1" in request.prompt.casefold()
+        session.expire_all()
+        completed = await session.get(BuildNode, keyframe_id)
+        assert completed is not None and completed.status == "PASSED"
+        attempt = await session.scalar(select(Attempt).where(Attempt.build_node_id == keyframe_id))
+        assert attempt is not None
+        assert attempt.status == "SUCCEEDED"
+        assert attempt.genblaze_run_id == "run_test_gmi"
+        clip_status = await session.scalar(
+            select(BuildNode.status).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "video.clip.01",
+            )
+        )
+        assert clip_status == "QUEUED"
+        clip_path = tmp_path / "generated.mp4"
+        command = [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=#111820:s=320x180:r=30:d=0.25",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(clip_path),
+        ]
+        await asyncio.to_thread(
+            subprocess.run,  # noqa: S603
+            command,
+            check=True,
+            capture_output=True,
+        )
+        gateway.output = clip_path.read_bytes()
+
+        clip_receipt = await _gmi_runtime(session_factory, store, gateway).run_once()
+
+        assert clip_receipt.completed == 1
+        assert len(gateway.calls) == 2
+        assert gateway.calls[1].stable_key == "video.clip.01"
+        assert gateway.calls[1].model == "test-video-model"
+        assert gateway.calls[1].fallback_models == ("test-video-fallback",)
+        assert len(gateway.calls[1].inputs) == 1
+        session.expire_all()
+        completed_clip = await session.scalar(
+            select(BuildNode).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "video.clip.01",
+            )
+        )
+        assert completed_clip is not None and completed_clip.status == "PASSED"
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def _attach_selected_output(
+    session,
+    store: MemoryStore,
+    seeded: IncrementalBuild,
+    stable_key: str,
+    data: bytes,
+    mime_type: str,
+    media_kind: str,
+) -> None:
+    node = await session.scalar(
+        select(BuildNode).where(
+            BuildNode.build_id == seeded.build_id,
+            BuildNode.stable_key == stable_key,
+        )
+    )
+    assert node is not None
+    digest = hashlib.sha256(data).hexdigest()
+    extension = mime_type.rsplit("/", 1)[-1].replace("mpeg", "mp3")
+    key = f"tenants/{seeded.organization_id}/delivery-inputs/{digest}.{extension}"
+    store.objects[key] = data
+    asset = Asset(
+        id=uuid.uuid4(),
+        organization_id=seeded.organization_id,
+        sha256=digest,
+        size_bytes=len(data),
+        mime_type=mime_type,
+        media_kind=media_kind,
+        b2_bucket=store.bucket,
+        b2_key=key,
+        verified_at=datetime.now(UTC),
+    )
+    attempt = Attempt(
+        id=uuid.uuid4(),
+        build_node_id=node.id,
+        attempt_no=99,
+        mechanism=str(AttemptMechanism.PRIMARY),
+        provider="test",
+        model="test-output",
+        idempotency_key=canonical_hash({"delivery-input": stable_key, "sha256": digest}),
+        status=str(AttemptStatus.SUCCEEDED),
+    )
+    session.add_all([asset, attempt])
+    await session.flush()
+    session.add(
+        AttemptAsset(
+            id=uuid.uuid4(),
+            attempt_id=attempt.id,
+            asset_id=asset.id,
+            role="selected",
+            ordinal=0,
+            selected=True,
+        )
+    )
+    node.status = str(BuildNodeStatus.REUSED)
+    node.selected_attempt_id = attempt.id
+    node.selected_asset_set_hash = digest
+
+
+async def test_delivery_worker_stores_seven_assets_and_completes_build(
+    session, session_factory
+) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    composer = FakeDeliveryComposer()
+    try:
+        build = await session.get(Build, seeded.build_id)
+        delivery = await session.scalar(
+            select(BuildNode).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "compose.delivery_package",
+            )
+        )
+        assert build is not None and delivery is not None
+        build.status = str(BuildStatus.RUNNING)
+        await session.execute(
+            update(BuildNode)
+            .where(BuildNode.build_id == seeded.build_id, BuildNode.id != delivery.id)
+            .values(status=str(BuildNodeStatus.REUSED))
+        )
+        inputs = {
+            "video.clip.01": (b"clip-one", "video/mp4", "VIDEO"),
+            "video.clip.02": (b"clip-two", "video/mp4", "VIDEO"),
+            "video.clip.03": (b"clip-three", "video/mp4", "VIDEO"),
+            "video.clip.04": (b"clip-four", "video/mp4", "VIDEO"),
+            "audio.narration": (b"narration", "audio/wav", "AUDIO"),
+            "audio.music": (b"music", "audio/mpeg", "AUDIO"),
+            "graphic.end_card": (b"end-card", "image/png", "IMAGE"),
+            "copy.pack": (
+                _provider_result(required_line="no added sugar").output.model_dump_json().encode(),
+                "application/json",
+                "DOCUMENT",
+            ),
+        }
+        for stable_key, (data, mime_type, media_kind) in inputs.items():
+            await _attach_selected_output(
+                session,
+                store,
+                seeded,
+                stable_key,
+                data,
+                mime_type,
+                media_kind,
+            )
+        delivery.status = str(BuildNodeStatus.QUEUED)
+        delivery_id = delivery.id
+        await session.execute(
+            text("delete from work_items where build_id=:build_id"),
+            {"build_id": seeded.build_id},
+        )
+        await WorkQueue(session).enqueue(
+            kind="EXECUTE_BUILD_NODE",
+            target_id=delivery_id,
+            build_id=seeded.build_id,
+            priority=10,
+            dedupe_key=f"execute:delivery:test:{delivery_id}",
+        )
+        await session.commit()
+        handlers = DeliveryWorkHandlers(
+            session_factory,
+            store,  # type: ignore[arg-type]
+            composer=composer,
+        )
+        runtime = WorkerRuntime(
+            session_factory,
+            store,  # type: ignore[arg-type]
+            owner="delivery-worker-test",
+            lease_seconds=30,
+            heartbeat_seconds=5,
+            concurrency=1,
+            delivery_handlers=handlers,
+        )
+
+        receipt = await runtime.run_once()
+
+        assert receipt.completed == 1
+        assert len(composer.calls) == 1
+        assert composer.calls[0].clips == (
+            b"clip-one",
+            b"clip-two",
+            b"clip-three",
+            b"clip-four",
+        )
+        session.expire_all()
+        completed_node = await session.get(BuildNode, delivery_id)
+        completed_build = await session.get(Build, seeded.build_id)
+        assert completed_node is not None and completed_node.status == "PASSED"
+        assert completed_build is not None and completed_build.status == "SUCCEEDED"
+        attempt = await session.scalar(select(Attempt).where(Attempt.build_node_id == delivery_id))
+        assert attempt is not None and attempt.status == "SUCCEEDED"
+        roles = set(
+            await session.scalars(
+                select(AttemptAsset.role).where(AttemptAsset.attempt_id == attempt.id)
+            )
+        )
+        assert roles == {
+            "master_16x9",
+            "master_9x16",
+            "final_audio",
+            "thumbnail_16x9",
+            "thumbnail_9x16",
+            "captions",
+            "report",
+        }
     finally:
         await _cleanup(session, seeded)

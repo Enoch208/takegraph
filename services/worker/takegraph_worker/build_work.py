@@ -782,6 +782,34 @@ async def schedule_ready_nodes(
                 correlation_id=uuid.uuid4(),
             )
         )
+    await session.flush()
+    statuses = tuple(
+        BuildNodeStatus(value)
+        for value in await session.scalars(
+            select(BuildNode.status).where(BuildNode.build_id == build.id)
+        )
+    )
+    if statuses and all(status.satisfies_dependency for status in statuses):
+        if build.status != str(BuildStatus.RUNNING):
+            raise InvalidSourceError(
+                f"Terminal node set cannot complete a build from {build.status}."
+            )
+        assert_transition(BuildStatus.RUNNING, BuildStatus.SUCCEEDED, subject="build")
+        previous = build.status
+        build.status = str(BuildStatus.SUCCEEDED)
+        build.completed_at = datetime.now(UTC)
+        build.version += 1
+        session.add(
+            DomainEvent(
+                event_id=uuid.uuid4(),
+                organization_id=project.organization_id,
+                project_id=project.id,
+                build_id=build.id,
+                event_type="build.status_changed",
+                payload_json={"from": previous, "to": str(BuildStatus.SUCCEEDED)},
+                correlation_id=uuid.uuid4(),
+            )
+        )
 
 
 __all__ = [

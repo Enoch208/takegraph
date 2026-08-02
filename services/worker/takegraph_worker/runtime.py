@@ -15,7 +15,10 @@ from takegraph_domain.errors import AssetVerificationError, DomainError
 from takegraph_infrastructure.b2 import B2Store
 
 from takegraph_worker.build_work import BuildWorkHandlers
+from takegraph_worker.delivery_work import DeliveryWorkHandlers
 from takegraph_worker.end_card_work import EndCardWorkHandlers
+from takegraph_worker.gmi_work import GMI_KEYS, GMIWorkHandlers
+from takegraph_worker.local_image_work import LocalImageWorkHandlers
 from takegraph_worker.music_work import MusicWorkHandlers
 from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.plan_work import PlanWorkHandlers
@@ -44,6 +47,9 @@ class WorkerRuntime:
         narration_handlers: NarrationWorkHandlers | None = None,
         music_handlers: MusicWorkHandlers | None = None,
         plan_handlers: PlanWorkHandlers | None = None,
+        local_image_handlers: LocalImageWorkHandlers | None = None,
+        gmi_handlers: GMIWorkHandlers | None = None,
+        delivery_handlers: DeliveryWorkHandlers | None = None,
         end_card_handlers: EndCardWorkHandlers | None = None,
     ) -> None:
         validate_lease_config(lease_seconds, heartbeat_seconds)
@@ -63,6 +69,11 @@ class WorkerRuntime:
         )
         self._music_handlers = music_handlers or MusicWorkHandlers(session_factory, store)
         self._plan_handlers = plan_handlers or PlanWorkHandlers(session_factory, store)
+        self._local_image_handlers = local_image_handlers or LocalImageWorkHandlers(
+            session_factory, store
+        )
+        self._gmi_handlers = gmi_handlers
+        self._delivery_handlers = delivery_handlers or DeliveryWorkHandlers(session_factory, store)
         self._end_card_handlers = end_card_handlers or EndCardWorkHandlers(session_factory, store)
 
     async def run_once(self) -> WorkRunReceipt:
@@ -135,6 +146,14 @@ class WorkerRuntime:
         if stable_key == "plan.shots":
             await self._plan_handlers.execute_build_node(build_node_id)
             return
+        if stable_key in {"transform.product_cutout", "image.poster"}:
+            await self._local_image_handlers.execute_build_node(build_node_id)
+            return
+        if stable_key in GMI_KEYS:
+            if self._gmi_handlers is None:
+                raise ValueError("GMI generation handler is not configured")
+            await self._gmi_handlers.execute_build_node(build_node_id)
+            return
         if stable_key == "audio.narration":
             await self._narration_handlers.execute_build_node(build_node_id)
             return
@@ -143,6 +162,9 @@ class WorkerRuntime:
             return
         if stable_key == "graphic.end_card":
             await self._end_card_handlers.execute_build_node(build_node_id)
+            return
+        if stable_key == "compose.delivery_package":
+            await self._delivery_handlers.execute_build_node(build_node_id)
             return
         if stable_key is None:
             raise ValueError("build node was not found")
