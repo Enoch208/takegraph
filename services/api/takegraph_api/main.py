@@ -19,6 +19,7 @@ from takegraph_domain.errors import DomainError
 
 from takegraph_api.b2_webhooks import router as b2_webhook_router
 from takegraph_api.projection import DemoProof, build_demo_proof
+from takegraph_api.projects import router as projects_router
 from takegraph_api.uploads import router as uploads_router
 
 API_PREFIX = "/api/v1"
@@ -30,6 +31,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 app.include_router(b2_webhook_router)
+app.include_router(projects_router)
 app.include_router(uploads_router)
 
 
