@@ -30,6 +30,15 @@ function replaceTextNodeOnce(source: string, from: string, to: string): string {
   });
 }
 
+function dedupeHtmlFragments(source: string, pattern: RegExp): string {
+  const seen = new Set<string>();
+  return source.replace(pattern, (fragment) => {
+    if (seen.has(fragment)) return "";
+    seen.add(fragment);
+    return fragment;
+  });
+}
+
 function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string {
   const data = proof.ok ? proof.data : null;
   const totalNodes = data ? String(data.total_nodes) : "UNAVAILABLE";
@@ -273,6 +282,20 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
   for (const [from, to] of numberReplacements) adapted = replaceTextNode(adapted, from, to);
 
   adapted = adapted
+    .replace(
+      /<div class="grid grid-cols-2[^"]*(?:w-6 h-6|w-8 h-8)[^"]*">\s*(?:<div[^>]*><\/div>\s*){4}<\/div>/g,
+      (block) => {
+        const size = block.includes("w-8 h-8") ? "w-10 h-10" : "w-7 h-7";
+        return `<img src="/brand/mark.png" alt="" class="${size} shrink-0 object-contain">`;
+      },
+    )
+    .replace(/<link id="all-fonts-link-font-(?!manrope"|oswald")[^>]*>/g, "")
+    .replace(/<style id="all-fonts-style-font-(?!manrope"|oswald")[^"]*">[\s\S]*?<\/style>/g, "")
+    .replace(/<script>\s*\/\*\s*Sequence animation on scroll[\s\S]*?<\/script>/i, "")
+    .replace(
+      /<style>\s*\/\* Default: paused \*\/[\s\S]*?\.animate-on-scroll\.animate \{ animation-play-state: running !important; \}\s*<\/style>/g,
+      "",
+    )
     .replace(/https:\/\/images\.unsplash\.com\/photo-[^"']+\?w=(?:100|150)&amp;h=(?:100|150)&amp;fit=crop/g, "/brand/mark.png")
     .replace(/alt=["'](?:Sarah|Marcus|Michael|Sofia|David|Alex|Profile)["']/g, 'alt="TAKEGRAPH build evidence"')
     .replace('alt="Agency Hero"', 'alt="Placeholder for the ORBIT cinematic master"')
@@ -304,9 +327,22 @@ function adaptTakegraphContent(source: string, proof: Result<DemoProof>): string
       "$1From change to proof$2",
     )
     .replace(
+      "</head>",
+      `<link rel="icon" href="/icon.png" type="image/png"><style id="takegraph-performance">html{scroll-behavior:smooth;scroll-padding-top:112px}body{overscroll-behavior-y:none}.gradient-blur>div,.gradient-blur::before,.gradient-blur::after{display:none!important}.gradient-blur{background:linear-gradient(to bottom,rgba(0,0,0,.82),rgba(0,0,0,.28),transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);mask-image:linear-gradient(to bottom,black 0%,black 42%,transparent 100%)}body>section:not(:first-of-type),body>footer{content-visibility:auto;contain-intrinsic-size:auto 900px}.tg-offscreen *{animation-play-state:paused!important}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.tg-offscreen *{animation:none!important}}</style></head>`,
+    )
+    .replace(
       "</body>",
-      `<script>document.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;var label=(button.textContent||"").replace(/\\s+/g," ").trim().toUpperCase();var demo=["OPEN LIVE BUILD","PREVIEW IMPACT","OPEN ORBIT BUILD","MORE","OPEN EVIDENCE VIEW","INSPECT RELEASE"];var sections={"SEE CHANGE PROPAGATE":"workflow","WATCH BUILD FLOW":"workflow","EXPLORE ARCHITECTURE":"capabilities","LINEAGE":"evidence","MANIFEST":"evidence","INSPECT PROOF":"evidence"};if(demo.includes(label)){window.parent.location.href="/demo";return;}if(sections[label]){document.getElementById(sections[label])?.scrollIntoView({behavior:"smooth",block:"start"});return;}if(["LOCAL","DETERMINISTIC","CONFIRM BUILD","PREVIEW ONLY"].includes(label)){event.preventDefault();button.disabled=true;button.setAttribute("aria-disabled","true");}});</script></body>`,
+      `<script>var tgSections=document.querySelectorAll("body>section,body>footer");var tgObserver=new IntersectionObserver(function(entries){entries.forEach(function(entry){entry.target.classList.toggle("tg-offscreen",!entry.isIntersecting)})},{rootMargin:"400px 0px"});tgSections.forEach(function(section){tgObserver.observe(section)});document.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;var label=(button.textContent||"").replace(/\\s+/g," ").trim().toUpperCase();var demo=["OPEN LIVE BUILD","PREVIEW IMPACT","OPEN ORBIT BUILD","MORE","OPEN EVIDENCE VIEW","INSPECT RELEASE"];var sections={"SEE CHANGE PROPAGATE":"workflow","WATCH BUILD FLOW":"workflow","EXPLORE ARCHITECTURE":"capabilities","LINEAGE":"evidence","MANIFEST":"evidence","INSPECT PROOF":"evidence"};if(demo.includes(label)){window.location.href="/demo";return}if(sections[label]){document.getElementById(sections[label])?.scrollIntoView({behavior:"smooth",block:"start"});return}if(["LOCAL","DETERMINISTIC","CONFIRM BUILD","PREVIEW ONLY"].includes(label)){event.preventDefault();button.disabled=true;button.setAttribute("aria-disabled","true")}});</script></body>`,
     );
+
+  adapted = dedupeHtmlFragments(
+    adapted,
+    /<link id="all-fonts-link-font-(?:manrope|oswald)"[^>]*>/g,
+  );
+  adapted = dedupeHtmlFragments(
+    adapted,
+    /<style id="all-fonts-style-font-(?:manrope|oswald)">[\s\S]*?<\/style>/g,
+  );
 
   return adapted;
 }
