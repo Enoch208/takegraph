@@ -115,6 +115,10 @@ class B2Store:
     def bucket(self) -> str:
         return self._settings.bucket
 
+    @property
+    def prefix(self) -> str:
+        return self._settings.prefix
+
     def probe(self) -> bool:
         """Cheap reachability check for /health/ready. Returns False rather than
         raising so one unavailable dependency does not take down the endpoint that

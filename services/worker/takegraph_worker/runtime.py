@@ -12,6 +12,7 @@ from takegraph_api.queue import ClaimedItem, LeaseLostError, WorkQueue, validate
 from takegraph_domain.errors import AssetVerificationError, DomainError
 from takegraph_infrastructure.b2 import B2Store
 
+from takegraph_worker.build_work import BuildWorkHandlers
 from takegraph_worker.source_work import SourceWorkHandlers
 
 
@@ -33,6 +34,7 @@ class WorkerRuntime:
         lease_seconds: int,
         heartbeat_seconds: int,
         concurrency: int,
+        build_handlers: BuildWorkHandlers | None = None,
     ) -> None:
         validate_lease_config(lease_seconds, heartbeat_seconds)
         if not owner or len(owner) > 128:
@@ -45,6 +47,7 @@ class WorkerRuntime:
         self._heartbeat_seconds = heartbeat_seconds
         self._concurrency = concurrency
         self._handlers = SourceWorkHandlers(session_factory, store)
+        self._build_handlers = build_handlers or BuildWorkHandlers(session_factory, store)
 
     async def run_once(self) -> WorkRunReceipt:
         async with self._session_factory() as session:
@@ -99,6 +102,9 @@ class WorkerRuntime:
             return
         if item.kind == "process_b2_event":
             await self._handlers.process_b2_event(item.target_id)
+            return
+        if item.kind == "EXECUTE_BUILD_NODE":
+            await self._build_handlers.execute_build_node(item.target_id)
             return
         raise ValueError(f"unsupported work item kind: {item.kind}")
 

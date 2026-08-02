@@ -69,6 +69,7 @@ BUILD_NODE_TRANSITIONS: dict[BuildNodeStatus, frozenset[BuildNodeStatus]] = {
             BuildNodeStatus.STORING,
             BuildNodeStatus.RETRY_PENDING,
             BuildNodeStatus.FALLBACK_PENDING,
+            BuildNodeStatus.WAITING_REVIEW,
             BuildNodeStatus.FAILED,
             BuildNodeStatus.CANCELLED,
         }

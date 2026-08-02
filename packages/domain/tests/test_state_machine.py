@@ -140,6 +140,10 @@ class TestBuildNodeStates:
         there is no edge from RUNNING to PASSED."""
         assert not can_transition(BuildNodeStatus.RUNNING, BuildNodeStatus.PASSED)
 
+    def test_ambiguous_submission_can_pause_for_review(self) -> None:
+        """A lost provider response must never be resubmitted as if no call happened."""
+        assert can_transition(BuildNodeStatus.RUNNING, BuildNodeStatus.WAITING_REVIEW)
+
     def test_storing_cannot_pass_without_verifying(self) -> None:
         """Stored bytes still have to clear the quality gates."""
         assert not can_transition(BuildNodeStatus.STORING, BuildNodeStatus.PASSED)
