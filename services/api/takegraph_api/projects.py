@@ -27,6 +27,13 @@ from takegraph_domain.errors import (
     NotFoundError,
     VersionConflictError,
 )
+from takegraph_domain.graph.orbit import (
+    DEFAULT_BRIEF_TEXT,
+    DEFAULT_LEGAL_LINE,
+    ORBIT_TEMPLATE,
+    PARAM_BRIEF_TEXT,
+    PARAM_LEGAL_LINE,
+)
 from takegraph_infrastructure.b2 import B2Settings, B2Store
 
 from takegraph_api.auth import require_permission
@@ -44,6 +51,7 @@ from takegraph_api.db.models import (
     SourceVersion,
 )
 from takegraph_api.db.session import session_scope
+from takegraph_api.graph_persistence import OrbitGraphRepository
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -155,6 +163,7 @@ class ProjectService:
             )
         )
         await self._session.flush()
+        await OrbitGraphRepository(self._session).compile_revision(revision_id)
         await self._session.execute(
             update(Project).where(Project.id == project_id).values(active_revision_id=revision_id)
         )
@@ -243,6 +252,8 @@ class ProjectService:
                     created_by=principal.actor_id,
                 )
             )
+            await self._session.flush()
+            await OrbitGraphRepository(self._session).compile_revision(revision_id)
         else:
             # The schema deliberately makes canonical specs unique per project.
             # Reversing an archive/rename therefore points back to the exact
@@ -395,6 +406,18 @@ class AssetAccessService:
 
 def _project_spec(source: dict[str, Any], *, name: str, status_value: str) -> dict[str, JsonValue]:
     spec: dict[str, JsonValue] = copy.deepcopy(source)
+    expected_template: dict[str, JsonValue] = {
+        "key": ORBIT_TEMPLATE.key,
+        "version": ORBIT_TEMPLATE.version,
+    }
+    template = spec.setdefault("template", expected_template)
+    if template != expected_template:
+        raise InvalidSourceError("Only the versioned ORBIT template is currently supported.")
+    parameters = spec.setdefault("parameters", {})
+    if not isinstance(parameters, dict):
+        raise InvalidSourceError("Project parameters field must be an object.")
+    parameters.setdefault(PARAM_LEGAL_LINE, DEFAULT_LEGAL_LINE)
+    parameters.setdefault(PARAM_BRIEF_TEXT, DEFAULT_BRIEF_TEXT)
     spec["project"] = {"name": name, "status": status_value}
     try:
         canonical_payload(spec)

@@ -24,6 +24,12 @@ TEMPLATE_VERSION = 1
 PARAM_LEGAL_LINE = "legal_line"
 PARAM_BRIEF_TEXT = "brief_text"
 
+DEFAULT_LEGAL_LINE = "zero sugar"
+DEFAULT_BRIEF_TEXT = (
+    "ORBIT Hydration launch. Dark graphite set, crisp white bottle, teal orbital "
+    "line, restrained orange accent. Four shots, cinematic."
+)
+
 DELIVERY_KEY = "compose.delivery_package"
 POSTER_KEY = "image.poster"
 DELIVERABLE_KEYS = (DELIVERY_KEY, POSTER_KEY)

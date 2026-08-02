@@ -72,6 +72,35 @@ async def _cleanup_organization(session, organization_id: uuid.UUID) -> None:
     )
     await session.execute(
         text(
+            "delete from graph_edges where graph_revision_id in "
+            "(select graph_revisions.id from graph_revisions "
+            "join project_revisions on project_revisions.id=graph_revisions.project_revision_id "
+            "join projects on projects.id=project_revisions.project_id "
+            "where projects.organization_id=:organization_id)"
+        ),
+        {"organization_id": organization_id},
+    )
+    await session.execute(
+        text(
+            "delete from graph_nodes where graph_revision_id in "
+            "(select graph_revisions.id from graph_revisions "
+            "join project_revisions on project_revisions.id=graph_revisions.project_revision_id "
+            "join projects on projects.id=project_revisions.project_id "
+            "where projects.organization_id=:organization_id)"
+        ),
+        {"organization_id": organization_id},
+    )
+    await session.execute(
+        text(
+            "delete from graph_revisions where project_revision_id in "
+            "(select project_revisions.id from project_revisions "
+            "join projects on projects.id=project_revisions.project_id "
+            "where projects.organization_id=:organization_id)"
+        ),
+        {"organization_id": organization_id},
+    )
+    await session.execute(
+        text(
             "delete from project_revisions where project_id in "
             "(select id from projects where organization_id=:organization_id)"
         ),
@@ -109,6 +138,18 @@ async def test_project_lifecycle_uses_versions_and_immutable_revisions(session, 
         assert created.version == 1
         assert created.active_revision_id is not None
         assert len(await service.list_projects(principal=owner)) == 1
+        assert (
+            await session.scalar(
+                text(
+                    "select count(*) from graph_nodes where graph_revision_id in "
+                    "(select id from graph_revisions where project_revision_id=:revision_id)"
+                ),
+                {"revision_id": created.active_revision_id},
+            )
+            == 18
+        )
+        assert await session.scalar(text("select count(*) from provider_policies")) == 5
+        assert await session.scalar(text("select count(*) from validation_policies")) == 6
 
         archived = await service.patch(
             project_id=created.id,
@@ -144,6 +185,16 @@ async def test_project_lifecycle_uses_versions_and_immutable_revisions(session, 
         revisions = await service.revisions(project_id=created.id, principal=owner)
         assert [revision.revision_no for revision in revisions] == [3, 2, 1]
         assert revisions[0].parent_revision_id == created.active_revision_id
+        assert (
+            await session.scalar(
+                text(
+                    "select count(*) from graph_revisions where project_revision_id in "
+                    "(select id from project_revisions where project_id=:project_id)"
+                ),
+                {"project_id": created.id},
+            )
+            == 3
+        )
 
         with pytest.raises(VersionConflictError):
             await service.patch(

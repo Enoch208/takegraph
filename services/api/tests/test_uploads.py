@@ -92,6 +92,31 @@ async def project_context(session):
     )
     await session.execute(text("delete from sources where project_id=:id"), {"id": project_id})
     await session.execute(
+        text(
+            "delete from graph_edges where graph_revision_id in "
+            "(select graph_revisions.id from graph_revisions "
+            "join project_revisions on project_revisions.id=graph_revisions.project_revision_id "
+            "where project_revisions.project_id=:project_id)"
+        ),
+        {"project_id": project_id},
+    )
+    await session.execute(
+        text(
+            "delete from graph_nodes where graph_revision_id in "
+            "(select graph_revisions.id from graph_revisions "
+            "join project_revisions on project_revisions.id=graph_revisions.project_revision_id "
+            "where project_revisions.project_id=:project_id)"
+        ),
+        {"project_id": project_id},
+    )
+    await session.execute(
+        text(
+            "delete from graph_revisions where project_revision_id in "
+            "(select id from project_revisions where project_id=:project_id)"
+        ),
+        {"project_id": project_id},
+    )
+    await session.execute(
         text("delete from project_revisions where project_id=:id"), {"id": project_id}
     )
     await session.execute(
@@ -165,6 +190,8 @@ class TestSourceUploadRoundTrip:
         assert await session.scalar(text("select count(*) from assets")) == 1
         assert await session.scalar(text("select count(*) from source_versions")) == 1
         assert await session.scalar(text("select count(*) from project_revisions")) == 1
+        assert await session.scalar(text("select count(*) from graph_revisions")) == 1
+        assert await session.scalar(text("select count(*) from graph_nodes")) == 18
         assert (
             await session.scalar(
                 text("select count(*) from source_versions where revision_id is not null")

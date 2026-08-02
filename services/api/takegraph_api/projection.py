@@ -23,6 +23,8 @@ from takegraph_domain.graph.compiler import compile_graph
 from takegraph_domain.graph.fingerprint import compute_fingerprint, compute_source_fingerprint
 from takegraph_domain.graph.impact import compute_impact
 from takegraph_domain.graph.orbit import (
+    DEFAULT_BRIEF_TEXT,
+    DEFAULT_LEGAL_LINE,
     ORBIT_TEMPLATE,
     PARAM_BRIEF_TEXT,
     PARAM_LEGAL_LINE,
@@ -32,13 +34,9 @@ from takegraph_domain.graph.types import CompiledGraph, NodeCacheState
 
 GENERATOR_CODE_VERSION = "seed-projection-1"
 
-ORIGINAL_LEGAL_LINE = "zero sugar"
+ORIGINAL_LEGAL_LINE = DEFAULT_LEGAL_LINE
 REVISED_LEGAL_LINE = "no added sugar"
-
-BRIEF_TEXT = (
-    "ORBIT Hydration launch. Dark graphite set, crisp white bottle, teal orbital "
-    "line, restrained orange accent. Four shots, cinematic."
-)
+BRIEF_TEXT = DEFAULT_BRIEF_TEXT
 
 _SOURCE_CONTENT_HASHES = {
     "source.brief": hashlib.sha256(BRIEF_TEXT.encode()).hexdigest(),

@@ -48,6 +48,7 @@ from takegraph_api.db.models import (
     UploadIntent,
 )
 from takegraph_api.db.session import session_scope
+from takegraph_api.graph_persistence import OrbitGraphRepository
 from takegraph_api.queue import WorkQueue
 
 SOURCE_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{2,127}$")
@@ -286,6 +287,8 @@ class SourceUploadService:
             media_kind=probe.media_kind,
             actor_id=principal.actor_id,
         )
+        await self._session.flush()
+        await OrbitGraphRepository(self._session).compile_revision(revision_id)
         source_version_id = uuid.uuid4()
         self._session.add(
             SourceVersion(

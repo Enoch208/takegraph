@@ -273,7 +273,17 @@ class GraphEdge(Base):
 
 class ProviderPolicy(Base):
     __tablename__ = "provider_policies"
-    __table_args__ = (UniqueConstraint("organization_id", "key", "version"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", "version"),
+        Index(
+            "uq_provider_policies_scope_key_version_nnd",
+            "organization_id",
+            "key",
+            "version",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     id: Mapped[UuidPk]
     organization_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
@@ -286,7 +296,17 @@ class ProviderPolicy(Base):
 
 class ValidationPolicy(Base):
     __tablename__ = "validation_policies"
-    __table_args__ = (UniqueConstraint("organization_id", "key", "version"),)
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", "version"),
+        Index(
+            "uq_validation_policies_scope_key_version_nnd",
+            "organization_id",
+            "key",
+            "version",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
 
     id: Mapped[UuidPk]
     organization_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
