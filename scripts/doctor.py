@@ -18,7 +18,6 @@ from pathlib import Path
 import httpx
 import psycopg
 import redis
-from genblaze_gmicloud import GMICloudImageProvider, GMICloudVideoProvider
 from takegraph_domain.errors import FeatureNotConfiguredError
 from takegraph_infrastructure.b2 import B2Settings, B2Store
 
@@ -113,28 +112,36 @@ def gmi_checks() -> list[Check]:
     if not key:
         return [Check("GMI Cloud", False, "NOT_CONFIGURED")]
     try:
-        image = GMICloudImageProvider(api_key=key)
-        video = GMICloudVideoProvider(api_key=key)
-        image.preflight_auth(timeout=8)
-        video.preflight_auth(timeout=8)
-    except Exception:  # noqa: BLE001 — converted to a safe readiness state
+        response = httpx.get(
+            "https://console.gmicloud.ai/api/v1/ie/requestqueue/apikey/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=10,
+        )
+    except httpx.HTTPError:
         return [Check("GMI Cloud auth", False, "credential rejected or service unavailable")]
+    if response.status_code in (401, 403):
+        return [Check("GMI Cloud auth", False, "credential rejected")]
+    if not response.is_success:
+        return [Check("GMI Cloud auth", False, f"HTTP {response.status_code}")]
+    payload = response.json()
+    model_ids = payload.get("model_ids") if isinstance(payload, dict) else None
+    if not isinstance(model_ids, list) or not all(isinstance(value, str) for value in model_ids):
+        return [Check("GMI Cloud auth", False, "unexpected catalog response")]
+    available = set(model_ids)
 
     checks: list[Check] = [Check("GMI Cloud auth", True, "accepted")]
-    for label, provider, model_id in (
-        ("GMI image model", image, image_model),
-        ("GMI video model", video, video_models[0]),
-        ("GMI fallback model", video, video_models[1]),
+    for label, model_id in (
+        ("GMI image model", image_model),
+        ("GMI video model", video_models[0]),
+        ("GMI fallback model", video_models[1]),
     ):
         if not model_id:
             checks.append(Check(label, False, "NOT_CONFIGURED"))
             continue
-        try:
-            result = provider.validate_model(model_id, refresh=True)
-            accepted = result.outcome.value in {"ok_authoritative", "ok_provisional"}
-            checks.append(Check(label, accepted, result.outcome.value))
-        except Exception:  # noqa: BLE001 — do not expose provider response bodies
-            checks.append(Check(label, False, "catalog probe failed"))
+        present = model_id in available
+        checks.append(
+            Check(label, present, "ok_authoritative" if present else "configured model missing")
+        )
     return checks
 
 
@@ -184,6 +191,18 @@ def elevenlabs_check() -> Check:
     )
 
 
+def elevenlabs_music_check() -> Check:
+    key = os.environ.get("ELEVENLABS_API_KEY", "")
+    return provider_catalog_check(
+        name="ElevenLabs music",
+        url="https://api.elevenlabs.io/v1/models",
+        headers={"xi-api-key": key},
+        model_env="ELEVENLABS_MUSIC_MODEL",
+        list_key=None,
+        id_key="model_id",
+    )
+
+
 def anthropic_check() -> Check:
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     return provider_catalog_check(
@@ -213,6 +232,7 @@ def main() -> int:
         storage_check(),
         *gmi_checks(),
         elevenlabs_check(),
+        elevenlabs_music_check(),
         anthropic_check(),
     ]
     for check in checks:
