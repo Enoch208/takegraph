@@ -1,0 +1,55 @@
+[project]
+name = "takegraph"
+version = "0.1.0"
+description = "TAKEGRAPH — the self-healing build system for generative media"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "takegraph-domain",
+    "takegraph-api",
+    "takegraph-worker",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6.112",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.uv.workspace]
+members = ["packages/domain", "services/api", "services/worker"]
+
+[tool.uv.sources]
+takegraph-domain = { workspace = true }
+takegraph-api = { workspace = true }
+takegraph-worker = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "T20", "RET", "SIM"]
+# S101 assert: fine in tests. T201 print: fine in scripts.
+ignore = ["S104"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101"]
+"scripts/**" = ["T201"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["genblaze.*", "boto3.*", "botocore.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["packages/domain/tests", "services/api/tests", "services/worker/tests"]
+filterwarnings = ["error::DeprecationWarning:takegraph_.*"]
