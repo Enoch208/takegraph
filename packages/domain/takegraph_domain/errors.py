@@ -35,6 +35,10 @@ class NotFoundError(DomainError):
     error_code = ApiErrorCode.NOT_FOUND
 
 
+class UnauthenticatedError(DomainError):
+    error_code = ApiErrorCode.UNAUTHENTICATED
+
+
 class ForbiddenError(DomainError):
     """§5.1 FR-AUTH-001: cross-tenant access is denied without revealing existence,
     so the API maps this to 404 for read paths."""
