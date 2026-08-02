@@ -19,8 +19,9 @@ html{scroll-behavior:smooth;scroll-padding-top:112px;background:#050608}
 body{position:relative;overscroll-behavior-y:none;background:#050608!important}
 .gradient-blur>div,.gradient-blur::before,.gradient-blur::after{display:none!important}
 .gradient-blur{background:linear-gradient(to bottom,rgba(5,6,8,.88),rgba(5,6,8,.3),transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);mask-image:linear-gradient(to bottom,black 0%,black 42%,transparent 100%)}
-[data-us-project="sajpUiTp7MIKdX6daDCu"]{opacity:.26!important}
-#tg-hero-graph{position:absolute;inset:0 0 auto;width:100%;height:880px;z-index:0;pointer-events:none;overflow:hidden;opacity:.72;mix-blend-mode:screen;mask-image:radial-gradient(ellipse 82% 72% at 50% 38%,black 18%,transparent 82%)}
+[data-us-project="sajpUiTp7MIKdX6daDCu"]{opacity:.5!important;filter:brightness(.52) saturate(1.18) sepia(.12) hue-rotate(8deg)}
+body>.aura-background-component::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(to bottom,rgba(5,6,8,.32),rgba(5,6,8,.7)),radial-gradient(ellipse at 50% 26%,rgba(255,106,53,.18),transparent 60%)}
+#tg-hero-graph{position:absolute;inset:0 0 auto;width:100%;height:880px;z-index:0;pointer-events:none;overflow:hidden;opacity:.2;mix-blend-mode:screen;mask-image:radial-gradient(ellipse 82% 72% at 50% 38%,black 18%,transparent 82%)}
 #tg-hero-graph svg{width:100%;height:100%}
 #tg-hero-graph path{fill:none;vector-effect:non-scaling-stroke}
 .tg-base-edges path{stroke:#2A3039;stroke-width:1}
@@ -29,8 +30,11 @@ body{position:relative;overscroll-behavior-y:none;background:#050608!important}
 .tg-nodes circle{stroke:#050608;stroke-width:2;vector-effect:non-scaling-stroke}
 .tg-node-reused{fill:#39D98A}.tg-node-running{fill:#67A7FF}.tg-node-review{fill:#F5C451}.tg-node-affected{fill:#FF6A35;filter:drop-shadow(0 0 7px rgba(255,106,53,.8))}
 body>section:not(:first-of-type),body>footer{content-visibility:auto;contain-intrinsic-size:auto 900px}
+body>section:first-of-type>.z-10>div.flex>button{min-width:260px!important;padding-inline:28px!important;flex:0 0 auto;overflow:hidden}
+body>section:first-of-type>.z-10>div.flex>button span{white-space:nowrap}
 .tg-offscreen *{animation-play-state:paused!important}
 @keyframes tgGraphFlow{to{stroke-dashoffset:-1}}
+@media(max-width:640px){body>section:first-of-type>.z-10>div.flex{width:100%}body>section:first-of-type>.z-10>div.flex>button{width:100%;min-width:0!important;max-width:360px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.tg-offscreen *{animation:none!important}.tg-affected-edges path{animation:none;stroke-dasharray:none;opacity:.8}}
 </style>`;
 
