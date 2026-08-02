@@ -1,31 +1,18 @@
-import { Hero } from "@/components/hero";
-import { Nav } from "@/components/nav";
-import { ProofStrip } from "@/components/proof-strip";
-import { Architecture, FinalCta, Footer, HowItWorks } from "@/components/sections";
-import { fetchDemoProof } from "@/lib/api";
+import { landingTemplateHtml } from "@/lib/template-source";
 
 /**
- * Landing page (PRD §18.5).
- *
- * A Server Component, so the proof figures are fetched on the server and the
- * client ships no data-fetching code. If the control plane is unreachable the
- * result carries the failure and the affected panels say so — the page does not
- * substitute placeholder numbers.
+ * Render the supplied Aura export in its own document so its complete CSS,
+ * scripts, fixed navigation, scroll observers and Unicorn canvas behave exactly
+ * as authored instead of being partially reinterpreted by the app shell.
  */
-export default async function LandingPage() {
-  const proof = await fetchDemoProof();
-
+export default function LandingPage() {
   return (
-    <>
-      <Nav />
-      <main id="main">
-        <Hero proof={proof} />
-        <ProofStrip proof={proof} />
-        <HowItWorks proof={proof} />
-        <Architecture />
-        <FinalCta />
-      </main>
-      <Footer />
-    </>
+    <main id="main" className="h-dvh w-full overflow-hidden bg-black">
+      <iframe
+        title="Creative landing page"
+        srcDoc={landingTemplateHtml()}
+        className="block h-full w-full border-0 bg-black"
+      />
+    </main>
   );
 }

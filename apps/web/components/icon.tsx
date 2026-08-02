@@ -1,22 +1,30 @@
 import type { SVGProps } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
+  Add01Icon,
   Alert02Icon,
   ArrowRight01Icon,
+  ArrowUpRight01Icon,
   CheckmarkCircle02Icon,
+  ChevronRightIcon,
   CpuIcon,
   Database02Icon,
   FileVerifiedIcon,
   GitBranchIcon,
+  GlobeIcon,
+  InstagramIcon,
   Layers01Icon,
   LockIcon,
+  Notification02Icon,
   PlayIcon,
   RefreshIcon,
   SecurityCheckIcon,
   Share08Icon,
   Shield01Icon,
   SparklesIcon,
+  StarIcon,
   Timer02Icon,
+  TwitterIcon,
 } from "@hugeicons/core-free-icons";
 
 /**
@@ -30,7 +38,7 @@ import {
  * for an icon. If a glyph is missing, find the HugeIcons equivalent and add it
  * here; do not install another icon package for one shape.
  */
-const icons = {
+export const icons = {
   // Node and build state — these mirror the domain enums, not the visual shape.
   reused: CheckmarkCircle02Icon,
   verified: FileVerifiedIcon,
@@ -53,7 +61,17 @@ const icons = {
 
   // Navigation and controls
   arrowRight: ArrowRight01Icon,
+  arrowUpRight: ArrowUpRight01Icon,
+  chevronRight: ChevronRightIcon,
+  add: Add01Icon,
+  notification: Notification02Icon,
   play: PlayIcon,
+
+  // Template social and decorative glyphs
+  instagram: InstagramIcon,
+  twitter: TwitterIcon,
+  globe: GlobeIcon,
+  star: StarIcon,
 } as const;
 
 export type IconName = keyof typeof icons;
