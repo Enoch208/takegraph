@@ -70,3 +70,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Next.js build artefacts already covered above; keep generated types out.
+apps/web/next-env.d.ts

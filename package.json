@@ -1,0 +1,11 @@
+{
+  "name": "takegraph",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "pnpm --filter @takegraph/web dev",
+    "build": "pnpm --filter @takegraph/web build",
+    "lint": "pnpm --filter @takegraph/web lint",
+    "typecheck": "pnpm --filter @takegraph/web typecheck"
+  }
+}

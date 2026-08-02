@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+/* Tailwind v4 is CSS-first: tokens live in @theme, there is no tailwind.config.js.
+   Every value here traces to PRD §18.2 except --color-canvas, which is darkened
+   from #0B0D10 so the hero reads closer to true black and the graph motif behind
+   the headline stays legible. */
+@theme {
+  --color-canvas: #050608;
+  --color-surface: #0f1216;
+  --color-elevated: #171b21;
+  --color-border: #232a33;
+  --color-hairline: #1a2028;
+
+  --color-ink: #f5f7fa;
+  --color-muted: #9ca6b5;
+  --color-faint: #5d6875;
+  --color-paper: #f4f1e8;
+
+  /* Status colours carry meaning, never decoration. §18.14 requires a text or
+     icon equivalent everywhere one of these appears. */
+  --color-signal: #ff6a35; /* rebuild / attention */
+  --color-verified: #39d98a; /* passed / reused / verified */
+  --color-review: #f5c451; /* human review */
+  --color-active: #67a7ff; /* running / selected */
+  --color-danger: #f05d6c; /* terminal failure */
+
+  --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    background-color: var(--color-canvas);
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-signal) 30%, transparent);
+    color: var(--color-ink);
+  }
+
+  /* §18.14: visible focus on every interactive element, never suppressed. */
+  :focus-visible {
+    outline: 2px solid var(--color-active);
+    outline-offset: 3px;
+    border-radius: 1px;
+  }
+}
+
+@layer components {
+  /* Hairline that fades at both edges — the template's section separator,
+     rebuilt as a utility rather than a repeated gradient string. */
+  .rule-fade {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      color-mix(in oklab, var(--color-ink) 18%, transparent),
+      transparent
+    );
+  }
+
+  /* Corner tick marks on evidence cards. Four 1px L-brackets, drawn with a
+     single element via background-image so no extra DOM nodes are needed. */
+  .corner-ticks {
+    position: relative;
+  }
+  .corner-ticks::before,
+  .corner-ticks::after {
+    content: "";
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    pointer-events: none;
+    border-color: var(--tick-color, var(--color-signal));
+  }
+  .corner-ticks::before {
+    top: -1px;
+    left: -1px;
+    border-top: 1px solid;
+    border-left: 1px solid;
+  }
+  .corner-ticks::after {
+    bottom: -1px;
+    right: -1px;
+    border-bottom: 1px solid;
+    border-right: 1px solid;
+  }
+}
+
+/* Entrance motion. §18.3 restricts animation to state and causality, so this is
+   used only for first paint of a section — never to imply progress. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+.rise {
+  animation: rise 1s var(--ease-out-expo) both;
+}
+
+/* Orange travels only the edges a change invalidated. The dash offset animation
+   is what makes causality visible; it is not a progress indicator. */
+@keyframes flow {
+  to {
+    stroke-dashoffset: -1000;
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* §18.3 and §18.14: a full static equivalent, not merely slower motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .rise {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
