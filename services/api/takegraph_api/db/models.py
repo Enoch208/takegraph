@@ -548,9 +548,17 @@ class WorkItem(Base):
         UniqueConstraint("dedupe_key"),
         Index(
             "ix_work_items_claimable",
+            text("priority desc"),
             "available_at",
-            "priority",
-            postgresql_where=text("status in ('QUEUED', 'RETRY_WAIT')"),
+            # Column order mirrors the claim query's ORDER BY (priority desc,
+            # available_at) so the index serves the sort as well as the filter.
+            #
+            # LEASED is in the predicate because an expired lease is claimable
+            # (§8.3.10). The claim query must therefore filter on exactly this
+            # status set — an OR-shaped predicate defeats Postgres's ability to
+            # prove the query implies the index, and it falls back to a seq scan.
+            # DONE/DEAD/CANCELLED, which dominate over time, stay out.
+            postgresql_where=text("status in ('QUEUED', 'RETRY_WAIT', 'LEASED')"),
         ),
     )
 

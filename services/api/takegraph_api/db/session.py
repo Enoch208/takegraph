@@ -1,0 +1,73 @@
+"""Async engine and session factory.
+
+One engine per process. Sessions are short-lived and scoped to a unit of work —
+§8.5 defines the transaction boundaries the application must respect, and holding
+a session open across an external provider call would pin a connection for
+minutes at a time.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def database_url() -> str:
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL is not set. The application refuses to guess a connection "
+            "string; copy .env.example to .env or export it explicitly."
+        )
+    return url
+
+
+def get_engine() -> AsyncEngine:
+    global _engine
+    if _engine is None:
+        _engine = create_async_engine(
+            database_url(),
+            pool_pre_ping=True,
+            # §20.2: every boundary has a timeout. No statement runs unbounded.
+            connect_args={"command_timeout": 15},
+        )
+    return _engine
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = async_sessionmaker(get_engine(), expire_on_commit=False, autoflush=False)
+    return _session_factory
+
+
+@asynccontextmanager
+async def session_scope() -> AsyncIterator[AsyncSession]:
+    """A transactional unit of work. Commits on success, rolls back on any
+    exception — a partially applied state transition is never left behind."""
+    async with get_session_factory()() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def dispose_engine() -> None:
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _session_factory = None
