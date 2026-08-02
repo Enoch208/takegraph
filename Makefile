@@ -5,7 +5,7 @@ SHELL := /bin/bash
 export DATABASE_URL ?= postgresql+asyncpg://takegraph:takegraph_local@127.0.0.1:5434/takegraph
 export REDIS_URL ?= redis://127.0.0.1:6380/0
 
-.PHONY: help setup up down dev migrate check test lint fmt typecheck doctor clean
+.PHONY: help setup up down dev worker migrate check test lint fmt typecheck doctor clean
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -23,9 +23,13 @@ down: ## Stop local dependencies
 dev: up migrate ## Start API, worker deps and web
 	@echo "API  -> http://127.0.0.1:8000/api/docs"
 	@echo "web  -> http://localhost:3000"
-	@( uv run uvicorn takegraph_api.main:app --reload --port 8000 & \
+	@( uv run uvicorn takegraph_api.main:app --reload --port 8000 --env-file .env & \
+	   uv run python -m takegraph_worker & \
 	   pnpm --filter @takegraph/web dev & \
 	   wait )
+
+worker: up migrate ## Run the durable worker and B2 reconciliation scheduler
+	uv run python -m takegraph_worker
 
 migrate: ## Apply database migrations
 	uv run alembic upgrade head
