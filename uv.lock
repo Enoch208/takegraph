@@ -970,12 +970,14 @@ version = "0.1.0"
 source = { editable = "packages/infrastructure" }
 dependencies = [
     { name = "genblaze-s3" },
+    { name = "pillow" },
     { name = "takegraph-domain" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "genblaze-s3", specifier = ">=0.3.6,<0.4" },
+    { name = "pillow", specifier = ">=11.3,<12" },
     { name = "takegraph-domain", editable = "packages/domain" },
 ]
 

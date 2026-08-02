@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select, text, update
 from takegraph_api.db.models import (
@@ -20,6 +22,8 @@ from takegraph_api.db.models import (
     Organization,
     Project,
     ProjectRevision,
+    Source,
+    SourceVersion,
     Validation,
     WorkItem,
 )
@@ -52,8 +56,13 @@ from takegraph_worker.anthropic_gateway import (
 )
 from takegraph_worker.build_work import BuildWorkHandlers
 from takegraph_worker.elevenlabs_gateway import NarrationRequest, NarrationResult
+from takegraph_worker.end_card_work import EndCardWorkHandlers
 from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.runtime import WorkerRuntime
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class MemoryStore:
@@ -423,6 +432,9 @@ async def _cleanup(session, seeded: IncrementalBuild) -> None:
         """delete from build_nodes where build_id in
            (select id from builds where project_id=:project_id)""",
         "delete from builds where project_id=:project_id",
+        """delete from source_versions where source_id in
+           (select id from sources where project_id=:project_id)""",
+        "delete from sources where project_id=:project_id",
         """delete from graph_edges where graph_revision_id in
            (select gr.id from graph_revisions gr
             join project_revisions pr on pr.id=gr.project_revision_id
@@ -686,5 +698,93 @@ async def test_submitting_narration_is_not_resubmitted_and_requires_review(
         assert attempt is not None and attempt.error_code == "AMBIGUOUS_SUBMISSION"
         assert node is not None and node.status == "WAITING_REVIEW"
         assert build is not None and build.status == "WAITING_REVIEW"
+    finally:
+        await _cleanup(session, seeded)
+
+
+async def test_end_card_composes_verified_product_and_copy_inputs(session, session_factory) -> None:
+    seeded = await _seed_incremental_build(session)
+    store = MemoryStore()
+    product_sha = hashlib.sha256(PNG_1X1).hexdigest()
+    product_key = f"tenants/{seeded.organization_id}/sources/{product_sha}.png"
+    store.objects[product_key] = PNG_1X1
+    source_node = await session.scalar(
+        select(BuildNode).where(
+            BuildNode.build_id == seeded.build_id,
+            BuildNode.stable_key == "source.product_reference",
+        )
+    )
+    build = await session.get(Build, seeded.build_id)
+    assert source_node is not None and build is not None
+    source_node.selected_asset_set_hash = product_sha
+    asset = Asset(
+        id=uuid.uuid4(),
+        organization_id=seeded.organization_id,
+        sha256=product_sha,
+        size_bytes=len(PNG_1X1),
+        mime_type="image/png",
+        media_kind="IMAGE",
+        b2_bucket=store.bucket,
+        b2_key=product_key,
+        verified_at=datetime.now(UTC),
+    )
+    source = Source(
+        id=uuid.uuid4(),
+        project_id=seeded.project_id,
+        stable_key="source.product_reference",
+        kind="IMAGE",
+    )
+    session.add_all([asset, source])
+    await session.flush()
+    session.add(
+        SourceVersion(
+            id=uuid.uuid4(),
+            source_id=source.id,
+            revision_id=build.project_revision_id,
+            asset_id=asset.id,
+            content_hash=product_sha,
+            created_by=uuid.uuid4(),
+        )
+    )
+    await session.commit()
+    try:
+        assert (
+            await _runtime(session_factory, store, FakeCopyGenerator()).run_once()
+        ).completed == 1
+        end_card_id = await session.scalar(
+            select(BuildNode.id).where(
+                BuildNode.build_id == seeded.build_id,
+                BuildNode.stable_key == "graphic.end_card",
+            )
+        )
+        assert end_card_id is not None
+
+        await EndCardWorkHandlers(
+            session_factory,
+            store,  # type: ignore[arg-type]
+        ).execute_build_node(end_card_id)
+
+        session.expire_all()
+        node = await session.get(BuildNode, end_card_id)
+        assert node is not None and node.status == "PASSED"
+        attempt = await session.scalar(select(Attempt).where(Attempt.build_node_id == end_card_id))
+        assert attempt is not None and attempt.provider == "local"
+        selected = await session.scalar(
+            select(Asset)
+            .join(AttemptAsset, AttemptAsset.asset_id == Asset.id)
+            .where(AttemptAsset.attempt_id == attempt.id, AttemptAsset.selected.is_(True))
+        )
+        assert selected is not None
+        assert selected.mime_type == "image/png"
+        assert selected.metadata_json["width"] == 1_920
+        assert selected.metadata_json["rendered_legal_line"] == "no added sugar"
+        validations = (
+            await session.scalars(select(Validation).where(Validation.build_node_id == end_card_id))
+        ).all()
+        assert {(row.gate_key, row.status) for row in validations} == {
+            ("required_phrase", "PASS"),
+            ("superseded_phrase", "PASS"),
+            ("schema", "PASS"),
+        }
     finally:
         await _cleanup(session, seeded)

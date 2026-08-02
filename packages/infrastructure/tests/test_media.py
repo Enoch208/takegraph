@@ -7,6 +7,7 @@ import wave
 
 import pytest
 from takegraph_domain.errors import InvalidSourceError
+from takegraph_infrastructure.image_composition import compose_orbit_end_card
 from takegraph_infrastructure.media import (
     detect_mime,
     normalize_narration_bytes,
@@ -56,3 +57,14 @@ def test_narration_is_normalized_to_48khz_mono_wav(tmp_path) -> None:
     assert probe.media_kind == "AUDIO"
     assert probe.sample_rate == 48_000
     assert probe.channels == 1
+
+
+def test_end_card_is_deterministic_1920x1080_png(tmp_path) -> None:
+    first = compose_orbit_end_card(PNG_1X1, legal_line="no added sugar")
+    second = compose_orbit_end_card(PNG_1X1, legal_line="no added sugar")
+    probe = probe_media_bytes(first, suffix=".png", temp_root=tmp_path)
+
+    assert first == second
+    assert detect_mime(first) == "image/png"
+    assert probe.width == 1_920
+    assert probe.height == 1_080
