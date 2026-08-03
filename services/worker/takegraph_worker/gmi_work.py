@@ -58,6 +58,7 @@ from takegraph_infrastructure.b2 import B2Store
 from takegraph_infrastructure.media import MediaProbe, probe_media_bytes
 
 from takegraph_worker.build_work import resolve_provider_policy, schedule_ready_nodes
+from takegraph_worker.recovery_work import apply_recovery, plan_recovery
 
 KEYFRAME_KEYS = frozenset(f"image.keyframe.{index:02d}" for index in range(1, 5))
 CLIP_KEYS = frozenset(f"video.clip.{index:02d}" for index in range(1, 5))
@@ -643,9 +644,36 @@ class GMIWorkHandlers:
             attempt.error_code = error_code[:64]
             attempt.error_message = message[:500]
             attempt.completed_at = datetime.now(UTC)
+
+            # §5.5/UJ-05: a failed attempt is not automatically a failed node.
+            # Consult the recovery policy first — retry, model fallback, or a
+            # parent-linked child run on another provider — and only fail when it
+            # says there is nothing left to try.
+            decision = await plan_recovery(
+                session,
+                node=node,
+                error_class=error_class,
+                current_model=attempt.model or "",
+            )
+            if await apply_recovery(
+                session,
+                build=build,
+                project=project,
+                node=node,
+                failed_attempt=attempt,
+                decision=decision,
+            ):
+                await session.commit()
+                return
+
             assert_transition(BuildNodeStatus(node.status), BuildNodeStatus.FAILED, subject="node")
             self._node_transition(session, project, build, node, BuildNodeStatus.FAILED)
             node.completed_at = datetime.now(UTC)
+            # The reason the build stopped is the recovery policy's, not a
+            # generic failure — "budget exhausted" and "fallback not configured"
+            # are different problems and the operator needs to know which.
+            node.reason_code = decision.reason_code
+            node.reason = decision.reason
             if build.status == str(BuildStatus.RUNNING):
                 assert_transition(BuildStatus.RUNNING, BuildStatus.FAILED, subject="build")
                 self._build_transition(session, project, build, BuildStatus.FAILED)
