@@ -24,6 +24,13 @@
   --color-active: #67a7ff; /* running / selected */
   --color-danger: #f05d6c; /* terminal failure */
 
+  /* Card geometry. The workspace is composed of panels on a canvas rather than
+     flush regions divided by rules — the radius is what separates "a surface" from
+     "a border", and keeping one value for panels and one for controls is what stops
+     a dashboard from looking assembled by several people. */
+  --radius-panel: 1rem;
+  --radius-control: 0.625rem;
+
   --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
   --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
@@ -58,6 +65,56 @@
 }
 
 @layer components {
+  /* The workspace panel. One definition so every card in the dashboard shares a
+     radius, a surface step and a border weight. */
+  .panel {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-panel);
+  }
+
+  /* A panel that carries meaning through a tinted wash rather than a solid fill.
+     The reference fills its feature cards with flat accent; at our surface
+     brightness a solid fill would blow out against everything around it, so the
+     accent arrives as a low-alpha gradient over the same surface and the border
+     does the identifying. Set --accent on the element. */
+  .panel-accent {
+    position: relative;
+    border-color: color-mix(in oklab, var(--accent) 35%, transparent);
+    background-image: linear-gradient(
+      160deg,
+      color-mix(in oklab, var(--accent) 14%, transparent),
+      transparent 62%
+    );
+  }
+
+  /* Minimum comfortable pointer target. WCAG 2.2 target size (minimum) is 24px;
+     44px is the Apple/Material guidance and the right call for a demo driven on a
+     laptop trackpad in front of an audience. Applied to icon-only controls, which
+     are the ones that tend to end up too small. */
+  .hit {
+    min-inline-size: 2.75rem;
+    min-block-size: 2.75rem;
+  }
+
+  /* Loading placeholder for media tiles.
+     A tile waiting on a 1.5 MB original from B2 is unavoidably a wait; what is
+     avoidable is it looking like a failure. A sweeping skeleton reads as "coming",
+     an empty box with a static icon reads as "broken", and the difference is
+     entirely perceived rather than measured. The global prefers-reduced-motion
+     rule below stops the sweep and leaves the block. */
+  .skeleton {
+    background-image: linear-gradient(
+      100deg,
+      transparent 20%,
+      color-mix(in oklab, var(--color-ink) 6%, transparent) 40%,
+      color-mix(in oklab, var(--color-ink) 6%, transparent) 60%,
+      transparent 80%
+    );
+    background-size: 220% 100%;
+    animation: sweep 1.6s ease-in-out infinite;
+  }
+
   /* Hairline that fades at both edges — the template's section separator,
      rebuilt as a utility rather than a repeated gradient string. */
   .rule-fade {
@@ -122,6 +179,15 @@
 @keyframes flow {
   to {
     stroke-dashoffset: -1000;
+  }
+}
+
+@keyframes sweep {
+  from {
+    background-position: 140% 0;
+  }
+  to {
+    background-position: -40% 0;
   }
 }
 

@@ -3,13 +3,19 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { Icon } from "@/components/icon";
+import { FeatureCard } from "@/components/demo/feature-card";
 import { IconRail } from "@/components/demo/icon-rail";
 import { ImpactPanel } from "@/components/demo/impact-panel";
+import { MetricRow } from "@/components/demo/metric-row";
 import { NodeDetail } from "@/components/demo/node-detail";
 import { NodeNav } from "@/components/demo/node-nav";
+import { SparkArea, SparkBars } from "@/components/demo/spark";
 import { SseStatus, type SseState } from "@/components/demo/sse-status";
+import { StatCard, type StatTone } from "@/components/demo/stat-card";
 import { StatusPill } from "@/components/demo/status-pill";
 import { StoryboardGrid } from "@/components/demo/storyboard-grid";
+import { buildMetrics, formatDuration } from "@/lib/build-metrics";
+import type { IconName } from "@/components/icon";
 import {
   buildEventsUrl,
   commitImpactPlan,
@@ -350,6 +356,45 @@ export function DemoWorkspace() {
 
   const isLiveBuild = Boolean(graph.build.parent_build_id);
 
+  // Derived after the guards above so `graph` is known present. Eighteen nodes is
+  // not worth memoising, and a stale memo on a live-streaming view is a worse
+  // problem than the arithmetic.
+  const metrics = buildMetrics(graph);
+
+  // The fourth KPI is whichever state most needs a person's attention. A card
+  // that always reads "0 failed" spends a quarter of the strip saying nothing;
+  // this one escalates failure over review over completion.
+  const attention: {
+    icon: IconName;
+    label: string;
+    value: number | string;
+    detail: string;
+    tone: StatTone;
+  } =
+    metrics.failed > 0
+      ? {
+          icon: "failed",
+          label: "Failed nodes",
+          value: metrics.failed,
+          detail: "build cannot release",
+          tone: "danger",
+        }
+      : metrics.review > 0
+        ? {
+            icon: "review",
+            label: "Awaiting review",
+            value: metrics.review,
+            detail: "needs a decision",
+            tone: "review",
+          }
+        : {
+            icon: "running",
+            label: "Build duration",
+            value: formatDuration(metrics.durationSeconds),
+            detail: graph.build.status.toLowerCase(),
+            tone: metrics.running > 0 ? "active" : "verified",
+          };
+
   return (
     <div className="flex h-svh overflow-hidden bg-canvas text-ink">
       <IconRail releaseHref={releaseHref} />
@@ -372,12 +417,13 @@ export function DemoWorkspace() {
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-2.5">
           <div className="flex items-center gap-3">
             <button
               type="button"
-              className="md:hidden text-muted"
+              className="hit flex items-center justify-center rounded-[var(--radius-control)] text-muted hover:bg-elevated hover:text-ink md:hidden"
               aria-label="Open node list"
+              aria-expanded={navOpen}
               onClick={() => setNavOpen((value) => !value)}
             >
               <Icon name="menu" className="size-5" />
@@ -400,53 +446,177 @@ export function DemoWorkspace() {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <SseStatus state={sseState} detail={error ?? undefined} />
+          <div className="flex flex-wrap items-center gap-2">
+            <SseStatus
+              state={sseState}
+              buildStatus={graph.build.status}
+              detail={error ?? undefined}
+            />
             <button
               type="button"
               onClick={() => setRailMode("impact")}
-              className="inline-flex items-center gap-2 border border-signal/50 bg-signal/10 px-3 py-2 text-xs font-medium uppercase tracking-wide text-signal transition-transform active:scale-95"
+              className="inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-control)] bg-signal px-3.5 text-xs font-semibold text-canvas transition-[transform,background-color] hover:bg-signal/90 active:scale-[0.98]"
             >
-              <Icon name="rebuild" className="size-3.5" />
+              <Icon name="rebuild" className="size-4" />
               Edit legal line
             </button>
             {releaseHref ? (
               <Link
                 href={releaseHref}
-                className="inline-flex items-center gap-2 border border-border px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted hover:text-ink"
+                className="inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-control)] border border-hairline px-3.5 text-xs font-medium text-muted transition-colors hover:bg-elevated hover:text-ink"
               >
-                <Icon name="release" className="size-3.5" />
+                <Icon name="release" className="size-4" />
                 Release {project.release_version}
               </Link>
             ) : null}
           </div>
         </header>
 
+        {/* Screen readers get the same live narration the status dot gives sighted
+            users. Polite, not assertive — a build event must never interrupt
+            someone mid-sentence. §18.14. */}
+        <p aria-live="polite" className="sr-only">
+          {`Build ${graph.build.status.toLowerCase()}. ${metrics.complete} of ${metrics.total} nodes complete, ${metrics.reused} reused, ${metrics.rebuilt} rebuilt.`}
+        </p>
+
         <div className="flex min-h-0 flex-1">
-          <main id="main" className="min-w-0 flex-1 overflow-y-auto p-4 md:p-6">
-            <div className="mb-4 flex items-end justify-between gap-4">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-wider text-faint">
-                  ORBIT storyboard
-                </p>
-                <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-                  {graph.build.total_nodes} nodes
-                </h1>
-              </div>
-              <p className="font-mono text-[10px] uppercase tracking-wider text-muted">
-                {graph.nodes.length} loaded from API
-              </p>
+          <main id="main" className="min-w-0 flex-1 overflow-y-auto p-4 md:p-5">
+            {/* KPI strip. Four figures, the shape the reference opens with, mapped
+                to what a build actually has: how big it is, what it skipped, what
+                it did, and whether anything needs a person. */}
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+              <StatCard
+                icon="layers"
+                label="Nodes in graph"
+                value={metrics.total}
+                detail={`${metrics.complete} complete`}
+              />
+              <StatCard
+                icon="reused"
+                label="Reused from cache"
+                value={metrics.reused}
+                detail={`${metrics.reusePct}% of graph`}
+                tone="verified"
+              />
+              <StatCard
+                icon="rebuild"
+                label="Rebuilt this run"
+                value={metrics.rebuilt}
+                detail={metrics.running > 0 ? `${metrics.running} in flight` : "none in flight"}
+                tone="signal"
+              />
+              <StatCard
+                icon={attention.icon}
+                label={attention.label}
+                value={attention.value}
+                detail={attention.detail}
+                tone={attention.tone}
+              />
             </div>
-            <StoryboardGrid
-              nodes={graph.nodes}
-              selectedKey={selectedKey}
-              token={token}
-              onSelect={(key) => {
-                setSelectedKey(key);
-                setRailMode("node");
-              }}
-              impactByKey={impactByKey}
-            />
+
+            {/* The dominant card, where the reference puts its bar chart. The
+                storyboard is this product's chart — it is the artifact and the
+                status display at once. */}
+            <section className="panel mt-3 p-4" aria-labelledby="storyboard-heading">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h1
+                    id="storyboard-heading"
+                    className="text-[15px] font-semibold tracking-tight text-ink"
+                  >
+                    {project.name} storyboard
+                  </h1>
+                  <p className="mt-0.5 text-xs text-muted">
+                    Every node in the graph, in build order. Select one to inspect its evidence.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-wider">
+                  <span className="flex items-center gap-1.5 text-signal">
+                    <span className="size-1.5 rounded-full bg-signal" />
+                    Rebuilt
+                  </span>
+                  <span className="flex items-center gap-1.5 text-faint">
+                    <span className="size-1.5 rounded-full bg-muted/50" />
+                    Reused
+                  </span>
+                </div>
+              </div>
+              <StoryboardGrid
+                nodes={graph.nodes}
+                selectedKey={selectedKey}
+                token={token}
+                onSelect={(key) => {
+                  setSelectedKey(key);
+                  setRailMode("node");
+                }}
+                impactByKey={impactByKey}
+              />
+            </section>
+
+            {/* The reference's bottom row: a metrics card beside two accent cards. */}
+            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <section className="panel p-4" aria-labelledby="metrics-heading">
+                <h2 id="metrics-heading" className="text-[13px] font-semibold tracking-tight">
+                  Build metrics
+                </h2>
+                <div className="mt-4 space-y-3">
+                  <MetricRow
+                    label="Complete"
+                    value={metrics.complete}
+                    total={metrics.total}
+                    tone="verified"
+                  />
+                  <MetricRow
+                    label="Reused"
+                    value={metrics.reused}
+                    total={metrics.total}
+                    tone="verified"
+                  />
+                  <MetricRow
+                    label="Rebuilt"
+                    value={metrics.rebuilt}
+                    total={metrics.total}
+                    tone="signal"
+                  />
+                  <MetricRow
+                    label="Quality gates"
+                    value={metrics.gatesPassed}
+                    total={metrics.gatesTotal}
+                    tone="active"
+                  />
+                </div>
+              </section>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:w-[26rem]">
+                <FeatureCard
+                  icon="verified"
+                  label="Progress"
+                  value={`${metrics.progressPct}%`}
+                  caption={`${metrics.complete} of ${metrics.total} nodes · ${formatDuration(metrics.durationSeconds)}`}
+                  accent="verified"
+                >
+                  <SparkArea
+                    series={metrics.completionSeries}
+                    className="h-full w-full"
+                    title={`Cumulative nodes completed: ${metrics.complete} of ${metrics.total}`}
+                  />
+                </FeatureCard>
+
+                <FeatureCard
+                  icon="recover"
+                  label="Self-healed"
+                  value={String(metrics.recovered)}
+                  caption={
+                    metrics.injectedFaults > 0
+                      ? `${metrics.attempts} attempts · ${metrics.injectedFaults} test fault`
+                      : `${metrics.attempts} attempts across ${metrics.total} nodes`
+                  }
+                  accent="signal"
+                >
+                  <SparkBars bars={metrics.attemptsPerNode} className="h-full w-full" />
+                </FeatureCard>
+              </div>
+            </div>
           </main>
 
           <div className="hidden lg:flex">
