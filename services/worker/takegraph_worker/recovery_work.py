@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from takegraph_api.db.models import Attempt, Build, BuildNode, DomainEvent, Project, ProviderPolicy
 from takegraph_api.queue import WorkQueue
 from takegraph_domain.builds.state_machine import assert_transition
+from takegraph_domain.canonical import JsonValue
 from takegraph_domain.enums import AttemptMechanism, BuildNodeStatus, ErrorClass
 from takegraph_domain.execution.idempotency import work_item_dedupe_key
 from takegraph_domain.execution.recovery import (
@@ -112,7 +113,7 @@ def resolve_placeholders(value: object, env: Mapping[str, str]) -> object:
     return value
 
 
-async def _policy_definition(session: AsyncSession, node: BuildNode) -> dict:
+async def _policy_definition(session: AsyncSession, node: BuildNode) -> dict[str, JsonValue]:
     """The node's provider policy with placeholders resolved, or an empty policy.
 
     An empty policy is not a silent default: `decide_recovery` reads it as no
@@ -128,7 +129,7 @@ async def _policy_definition(session: AsyncSession, node: BuildNode) -> dict:
     if policy is None:
         return {}
     resolved = resolve_placeholders(dict(policy.definition_json), os.environ)
-    return cast("dict", resolved)
+    return cast("dict[str, JsonValue]", resolved)
 
 
 async def plan_recovery(
@@ -240,8 +241,9 @@ async def apply_recovery(
     return True
 
 
-def _jitter_enabled(policy: dict) -> bool:
-    return bool((policy.get("retry") or {}).get("jitter"))
+def _jitter_enabled(policy: dict[str, JsonValue]) -> bool:
+    retry = policy.get("retry")
+    return isinstance(retry, dict) and bool(retry.get("jitter"))
 
 
 async def next_attempt_no(session: AsyncSession, node_id: uuid.UUID) -> int:

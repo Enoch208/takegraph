@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from dataclasses import dataclass
 
@@ -24,6 +25,8 @@ from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.plan_work import PlanWorkHandlers
 from takegraph_worker.source_node_work import SOURCE_KEYS, SourceNodeHandlers
 from takegraph_worker.source_work import SourceWorkHandlers
+
+logger = logging.getLogger("takegraph.worker.runtime")
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +112,13 @@ class WorkerRuntime:
             await self._dispatch(item)
         except Exception as exc:  # noqa: BLE001 — classified and durably recorded below
             failure = exc
+            # The durable record is deliberately sanitised (`_safe_message`), which
+            # is right for a column the API can return but leaves an operator with
+            # nothing to debug from. The full chain goes to the process log, where
+            # it is not attacker-reachable.
+            logger.exception(
+                "work handler failed: kind=%s target=%s", item.kind, item.target_id
+            )
         finally:
             stop_heartbeat.set()
             await heartbeat

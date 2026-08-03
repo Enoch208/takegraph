@@ -10,8 +10,9 @@ import sys
 import time
 from pathlib import Path
 
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from takegraph_api.b2_reconciliation import B2UploadReconciler
-from takegraph_api.db.session import dispose_engine, get_session_factory
+from takegraph_api.db.session import dispose_engine, get_engine, get_session_factory
 from takegraph_infrastructure.b2 import B2Settings, B2Store
 
 from takegraph_worker.gmi_gateway import GMICloudGateway, GMICloudSettings
@@ -19,6 +20,23 @@ from takegraph_worker.gmi_work import GMIWorkHandlers
 from takegraph_worker.runtime import WorkerRuntime
 
 logger = logging.getLogger("takegraph.worker")
+
+#: Infrastructure faults between this process and Postgres — a dropped socket, a
+#: database restart, a pre-ping that timed out on a half-open connection. These
+#: say nothing about whether the work is doable, and §8.3.10's leases guarantee
+#: that anything claimed becomes claimable again once its lease expires, so
+#: nothing is lost by backing off and reconnecting.
+#:
+#: Deliberately narrow. A bug in a handler, a bad configuration or a failed
+#: invariant is not in this tuple and still takes the process down.
+_TRANSIENT_DB_ERRORS = (OperationalError, InterfaceError, DBAPIError, OSError)
+
+#: Give up rather than spin forever. If the database has not come back after this
+#: many consecutive attempts (~2 minutes at the backoff below), the problem is not
+#: transient and a supervisor restarting the process is more useful than a worker
+#: that looks alive while doing nothing.
+_MAX_CONSECUTIVE_DB_FAILURES = 10
+_BACKOFF_CEILING_SECONDS = 30.0
 
 
 def _load_local_env(path: Path = Path(".env")) -> None:
@@ -69,24 +87,48 @@ async def run() -> None:
     )
     reconciliation_interval = _positive_int("RECONCILIATION_INTERVAL_SECONDS")
     next_reconciliation = 0.0
+    consecutive_db_failures = 0
     _log("worker.started", owner=worker_id, concurrency=concurrency)
     try:
         while True:
-            monotonic_now = time.monotonic()
-            if monotonic_now >= next_reconciliation:
-                async with factory() as session:
-                    reconciliation = await B2UploadReconciler(session, store).run_once()
-                    await session.commit()
-                _log(
-                    "b2.reconciliation",
-                    ran=reconciliation.ran,
-                    scanned=reconciliation.scanned,
-                    discovered=reconciliation.discovered,
-                    queued=reconciliation.queued,
-                )
-                next_reconciliation = monotonic_now + reconciliation_interval
+            try:
+                monotonic_now = time.monotonic()
+                if monotonic_now >= next_reconciliation:
+                    async with factory() as session:
+                        reconciliation = await B2UploadReconciler(session, store).run_once()
+                        await session.commit()
+                    _log(
+                        "b2.reconciliation",
+                        ran=reconciliation.ran,
+                        scanned=reconciliation.scanned,
+                        discovered=reconciliation.discovered,
+                        queued=reconciliation.queued,
+                    )
+                    next_reconciliation = monotonic_now + reconciliation_interval
 
-            batch = await runtime.run_once()
+                batch = await runtime.run_once()
+            except _TRANSIENT_DB_ERRORS as exc:
+                consecutive_db_failures += 1
+                # Loudly, with the exception — a worker that swallows this and
+                # keeps looping is indistinguishable from one that is idle.
+                logger.exception("takegraph.worker database error")
+                _log(
+                    "worker.db_error",
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                    consecutive=consecutive_db_failures,
+                )
+                if consecutive_db_failures >= _MAX_CONSECUTIVE_DB_FAILURES:
+                    _log("worker.giving_up", consecutive=consecutive_db_failures)
+                    raise
+                # The pool is the likeliest thing holding dead sockets, so drop
+                # it. dispose() installs a fresh pool and leaves the engine (and
+                # therefore the session factory captured above) usable.
+                await get_engine().dispose()
+                await asyncio.sleep(min(2.0**consecutive_db_failures, _BACKOFF_CEILING_SECONDS))
+                continue
+
+            consecutive_db_failures = 0
             if batch.claimed:
                 _log(
                     "worker.batch",

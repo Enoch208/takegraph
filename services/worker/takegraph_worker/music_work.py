@@ -55,6 +55,61 @@ from takegraph_worker.elevenlabs_music_gateway import (
 
 MusicProber = Callable[[bytes], MediaProbe]
 
+#: ElevenLabs rejects a longer prompt with HTTP 422 and
+#: `{"type": "string_too_long", "loc": ["body", "prompt"],
+#:   "msg": "String should have at most 4100 characters"}`.
+#: This constant is the provider's real limit, observed from that response. The
+#: guard here previously allowed 5,000, so an over-long prompt passed our own
+#: check and was refused at the provider — the node failed terminally on a
+#: 4xx that no retry policy will ever clear, and the build died with it.
+MUSIC_PROMPT_LIMIT = 4_100
+
+#: Room for the fixed scaffolding plus the shot beats, so an unusually long brief
+#: is clamped rather than pushing the whole prompt over the provider limit.
+_BRIEF_BUDGET = 1_200
+
+
+def _compose_prompt(template: str, brief: str, plan: object, duration_seconds: int) -> str:
+    """Build the music prompt from the tonal parts of the plan.
+
+    The full shot-plan JSON used to be pasted in whole. It is written for a video
+    model — camera bodies, focal lengths, easing curves — none of which a music
+    model can act on, and at four richly-described shots it alone ran past the
+    provider's prompt limit. Shot titles and the overall length carry the pacing
+    information the bed actually needs.
+    """
+    beats = " · ".join(_shot_titles(plan))
+    clamped = brief if len(brief) <= _BRIEF_BUDGET else brief[:_BRIEF_BUDGET].rstrip() + "…"
+    lines = [
+        template,
+        f"Creative brief: {clamped}",
+        f"Total length: {duration_seconds} seconds.",
+    ]
+    if beats:
+        lines.append(f"Shot beats in order: {beats}.")
+    lines.append("Instrumental only. No vocals, spoken words, or product claims.")
+    return "\n".join(lines)
+
+
+def _shot_titles(plan: object) -> list[str]:
+    """Ordered shot titles, or an empty list when the plan has none.
+
+    Empty is a legitimate answer — the prompt simply carries less pacing detail.
+    Raising here would fail a node over a cosmetic input.
+    """
+    if not isinstance(plan, dict):
+        return []
+    shots = plan.get("shots")
+    if not isinstance(shots, list):
+        return []
+    titles = []
+    for shot in shots:
+        if isinstance(shot, dict):
+            title = shot.get("title")
+            if isinstance(title, str) and title.strip():
+                titles.append(title.strip())
+    return titles
+
 
 @dataclass(frozen=True, slots=True)
 class PreparedMusicWork:
@@ -309,12 +364,8 @@ class MusicWorkHandlers:
         duration = operation_parameters.get("duration_seconds")
         if not isinstance(duration, int) or duration < 3 or duration > 600:
             raise InvalidSourceError("Music duration is outside the provider limit.")
-        plan_json = json.dumps(plan, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        prompt = (
-            f"{template}\nCreative brief: {brief}\nShot plan: {plan_json}\n"
-            "Instrumental only. No vocals, spoken words, or product claims."
-        )
-        if len(prompt) > 5_000:
+        prompt = _compose_prompt(template, brief, plan, duration)
+        if len(prompt) > MUSIC_PROMPT_LIMIT:
             raise InvalidSourceError("Music prompt exceeds the provider safety limit.")
         return prompt, duration * 1_000
 

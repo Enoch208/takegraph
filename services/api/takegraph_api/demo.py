@@ -24,6 +24,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from takegraph_domain.auth import Permission, Principal, authorize_project
 from takegraph_domain.enums import Role
 from takegraph_domain.errors import InvalidSourceError, NotFoundError
@@ -96,7 +97,7 @@ _REAL_MEDIA_ASSETS = (
 )
 
 
-async def _resolve_demo_project(session) -> tuple[Project, Build]:
+async def _resolve_demo_project(session: AsyncSession) -> tuple[Project, Build]:
     """The demo project whose completed build is backed by real, verified media.
 
     Ordering by recency alone is not enough, and getting this wrong is not a

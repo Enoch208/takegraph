@@ -39,6 +39,15 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             database_url(),
             pool_pre_ping=True,
+            # Anything between this process and Postgres that silently drops idle
+            # TCP — Docker Desktop's port proxy, a NAT gateway, a load balancer —
+            # leaves the pool holding sockets that are open here and gone there.
+            # pool_pre_ping alone does not save us: the ping is sent on the dead
+            # socket and hangs until command_timeout, and SQLAlchemy does not
+            # classify a TimeoutError as a disconnect, so it propagates to the
+            # caller. Recycling well inside the usual idle-drop window means the
+            # connection is replaced before it can go stale.
+            pool_recycle=300,
             # §20.2: every boundary has a timeout. No statement runs unbounded.
             connect_args={"command_timeout": 15},
         )

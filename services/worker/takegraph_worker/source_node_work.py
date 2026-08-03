@@ -33,7 +33,7 @@ from takegraph_api.db.models import (
     SourceVersion,
 )
 from takegraph_domain.builds.state_machine import assert_transition
-from takegraph_domain.canonical import canonical_hash
+from takegraph_domain.canonical import JsonValue, canonical_hash
 from takegraph_domain.enums import BuildNodeStatus, BuildStatus
 from takegraph_domain.errors import AssetVerificationError, InvalidSourceError, NotFoundError
 from takegraph_domain.graph.orbit import DEFAULT_BRIEF_TEXT, PARAM_BRIEF_TEXT
@@ -43,7 +43,7 @@ from takegraph_worker.build_work import schedule_ready_nodes
 SOURCE_KEYS = frozenset({"source.brief", "source.product_reference"})
 
 
-def brief_content_hash(spec: dict) -> str:
+def brief_content_hash(spec: dict[str, JsonValue]) -> str:
     """Content hash for the normalized brief.
 
     Must match the hash the impact engine used when it decided this node was
@@ -166,7 +166,9 @@ class SourceNodeHandlers:
             .order_by(SourceVersion.created_at.desc())
             .limit(1)
         )
-        source_version, asset = row.one_or_none() or (None, None)
+        found = row.one_or_none()
+        source_version: SourceVersion | None = None if found is None else found[0]
+        asset: Asset | None = None if found is None else found[1]
         if source_version is None or asset is None:
             raise InvalidSourceError(
                 f"{node.stable_key} has no uploaded source version to resolve."

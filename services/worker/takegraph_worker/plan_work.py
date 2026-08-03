@@ -50,6 +50,23 @@ from takegraph_worker.anthropic_plan_gateway import (
     PlanGenerator,
 )
 from takegraph_worker.build_work import resolve_provider_policy, schedule_ready_nodes
+from takegraph_worker.reentry import logical_attempt_slot, plan_reentry
+
+
+def _ambiguous_message(exc: Exception | None) -> str:
+    """A reviewer-facing reason that names the actual failure.
+
+    Truncated because this is stored on the attempt and rendered in the node
+    inspector, and a provider stack trace is not a reason.
+    """
+    base = "Anthropic shot-plan submission is ambiguous; review required."
+    if exc is None:
+        return base
+    detail = str(exc).strip() or type(exc).__name__
+    cause = exc.__cause__
+    if cause is not None and str(cause).strip():
+        detail = f"{detail} ({type(cause).__name__}: {str(cause).strip()})"
+    return f"{base} {detail}"[:1000]
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +193,21 @@ class PlanWorkHandlers:
                 .order_by(Attempt.attempt_no.desc())
                 .limit(1)
             )
+            # Resolved before the resume branches below so a parked node reaches
+            # a fresh submission instead of tripping the "unsupported state"
+            # guard, which is what previously killed every recovery and retake.
+            reentry = await plan_reentry(
+                session,
+                node=node,
+                latest=attempt,
+                provider=provider,
+                model=model,
+                timeout_seconds=timeout,
+                subject="Shot-plan node",
+            )
+            if reentry is not None:
+                provider, model, timeout = reentry.provider, reentry.model, reentry.timeout_seconds
+
             if attempt is not None:
                 if attempt.status == str(AttemptStatus.SUCCEEDED):
                     return self._prepared(
@@ -220,9 +252,10 @@ class PlanWorkHandlers:
                         product_bytes,
                         timeout,
                     )
-                raise InvalidSourceError(
-                    f"Existing shot-plan attempt is in unsupported state {attempt.status}."
-                )
+                if reentry is None:
+                    raise InvalidSourceError(
+                        f"Existing shot-plan attempt is in unsupported state {attempt.status}."
+                    )
 
             if node.status != str(BuildNodeStatus.QUEUED):
                 raise InvalidSourceError(f"Shot-plan node is not runnable from {node.status}.")
@@ -242,19 +275,31 @@ class PlanWorkHandlers:
                 )
                 or 0
             ) + 1
+            mechanism = reentry.mechanism if reentry else AttemptMechanism.PRIMARY
             attempt = Attempt(
                 id=uuid.uuid4(),
                 build_node_id=node.id,
                 attempt_no=attempt_no,
-                mechanism=str(AttemptMechanism.PRIMARY),
+                mechanism=str(mechanism),
+                # §14.3 lineage: a recovery or retake points at the attempt it
+                # supersedes, so the inspector shows a chain rather than a set of
+                # unrelated tries.
+                parent_attempt_id=reentry.parent_attempt_id if reentry else None,
                 provider=provider,
                 model=model,
                 idempotency_key=submission_idempotency_key(
                     build_node_id=node.id,
                     fingerprint=node.fingerprint,
-                    mechanism=AttemptMechanism.PRIMARY,
+                    mechanism=mechanism,
                     provider=provider,
                     model=model,
+                    logical_attempt_slot=await logical_attempt_slot(
+                        session,
+                        build_node_id=node.id,
+                        mechanism=mechanism,
+                        provider=provider,
+                        model=model,
+                    ),
                 ),
                 status=str(AttemptStatus.SUBMITTING),
             )
@@ -505,7 +550,11 @@ class PlanWorkHandlers:
         attempt.status = str(AttemptStatus.FAILED)
         attempt.error_class = "INTERNAL"
         attempt.error_code = "AMBIGUOUS_SUBMISSION"
-        attempt.error_message = "Anthropic shot-plan submission is ambiguous; review required."
+        # Carry the underlying cause. The reviewer this parks the node for has to
+        # decide between PASS, FAIL and RETAKE, and "review required" with the
+        # cause discarded gives them nothing to decide on — §16.6 expects the
+        # person overriding an automatic result to be able to justify it.
+        attempt.error_message = _ambiguous_message(exc)
         attempt.completed_at = datetime.now(UTC)
         assert_transition(
             BuildNodeStatus(node.status), BuildNodeStatus.WAITING_REVIEW, subject="node"
@@ -521,7 +570,18 @@ class PlanWorkHandlers:
             session,
             attempt.id,
             "attempt.ambiguous_submission",
-            {"error_type": None if exc is None else type(exc).__name__},
+            {
+                "error_type": None if exc is None else type(exc).__name__,
+                "error_detail": None if exc is None else str(exc)[:500],
+                "cause_type": (
+                    None
+                    if exc is None or exc.__cause__ is None
+                    else type(exc.__cause__).__name__
+                ),
+                "cause_detail": (
+                    None if exc is None or exc.__cause__ is None else str(exc.__cause__)[:500]
+                ),
+            },
         )
 
     async def _recover_result(

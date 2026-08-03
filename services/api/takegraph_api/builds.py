@@ -17,13 +17,16 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from takegraph_domain.auth import Permission, Principal, authorize_project
+from takegraph_domain.canonical import JsonValue
 from takegraph_domain.errors import NotFoundError
 
 from takegraph_api.auth import get_principal
@@ -118,7 +121,7 @@ class ValidationView(BaseModel):
     status: str
     score: str | None
     confidence: str | None
-    evidence: dict | None
+    evidence: dict[str, JsonValue] | None
     created_at: str
     inherited: bool = False
     """True when this gate ran in the build that generated the bytes, not in this
@@ -182,7 +185,17 @@ class BuildGraphView(BaseModel):
 
 
 def _iso(value: object) -> str | None:
-    return None if value is None else value.isoformat()  # type: ignore[union-attr]
+    """Serialise a timestamp column.
+
+    Narrowed rather than ignored: a non-datetime reaching here means a column
+    was renamed or retyped underneath this view, and silently emitting its
+    ``repr`` would put a malformed timestamp in front of the client.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        raise TypeError(f"Expected a datetime timestamp, got {type(value).__name__}.")
+    return value.isoformat()
 
 
 def _decimal(value: object) -> str | None:
@@ -312,7 +325,7 @@ async def _load_build(build_id: uuid.UUID, principal: Principal) -> tuple[Build,
         return build, project
 
 
-async def _latest_sequence(session, build_id: uuid.UUID) -> int:
+async def _latest_sequence(session: AsyncSession, build_id: uuid.UUID) -> int:
     """Used by the client to resume SSE with Last-Event-ID (§5.9 FR-EVT-001)."""
     value = await session.scalar(
         select(func.max(DomainEvent.sequence)).where(DomainEvent.build_id == build_id)

@@ -26,6 +26,7 @@ from takegraph_api.demo import router as demo_router
 from takegraph_api.projection import DemoProof, load_demo_proof
 from takegraph_api.projects import router as projects_router
 from takegraph_api.release_routes import router as releases_router
+from takegraph_api.review import router as review_router
 from takegraph_api.uploads import router as uploads_router
 
 API_PREFIX = "/api/v1"
@@ -42,6 +43,7 @@ app.include_router(demo_router)
 app.include_router(changes_router)
 app.include_router(projects_router)
 app.include_router(releases_router)
+app.include_router(review_router)
 app.include_router(uploads_router)
 
 

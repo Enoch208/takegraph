@@ -21,6 +21,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from takegraph_domain.auth import Permission, Principal, authorize_project
 from takegraph_domain.errors import NotFoundError
 from takegraph_infrastructure.b2 import B2Settings, B2Store
@@ -86,7 +87,9 @@ def _stores() -> tuple[B2Store, B2Store]:
     )
 
 
-async def _load_for_read(session, release_id: uuid.UUID, principal: Principal):
+async def _load_for_read(
+    session: AsyncSession, release_id: uuid.UUID, principal: Principal
+) -> tuple[Release, Project]:
     release = await session.get(Release, release_id)
     if release is None:
         raise NotFoundError("Release not found.")

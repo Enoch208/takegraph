@@ -85,7 +85,11 @@ from takegraph_worker.elevenlabs_music_gateway import (
 from takegraph_worker.end_card_work import EndCardWorkHandlers
 from takegraph_worker.gmi_work import GMIWorkHandlers
 from takegraph_worker.local_image_work import LocalImageWorkHandlers
-from takegraph_worker.music_work import MusicWorkHandlers
+from takegraph_worker.music_work import (
+    MUSIC_PROMPT_LIMIT,
+    MusicWorkHandlers,
+    _compose_prompt,
+)
 from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.plan_work import PlanWorkHandlers
 from takegraph_worker.runtime import WorkerRuntime
@@ -1037,7 +1041,10 @@ async def _prepare_music_execution(
     music_node.selected_asset_set_hash = None
     music_node.reuse_proof_json = None
 
-    plan_bytes = b'{"shots":[{"index":1,"tone":"restrained"}]}'
+    plan_bytes = (
+        b'{"shots":[{"index":1,"title":"Emergence","tone":"restrained",'
+        b'"camera":"Low-angle medium shot, 85mm equivalent, f/2.8, shallow depth of field"}]}'
+    )
     plan_sha = hashlib.sha256(plan_bytes).hexdigest()
     plan_key = f"tenants/{seeded.organization_id}/plans/{plan_sha}.json"
     store.objects[plan_key] = plan_bytes
@@ -1166,8 +1173,18 @@ async def test_music_worker_persists_verified_asset_and_validation_evidence(
         assert receipt.completed == 1, worker_error
         assert len(generator.calls) == 1
         assert generator.calls[0].duration_ms == 20_000
-        assert "Dark graphite set" in generator.calls[0].prompt
-        assert '"tone":"restrained"' in generator.calls[0].prompt
+        prompt = generator.calls[0].prompt
+        assert "Dark graphite set" in prompt
+        # Pacing reaches the music model as shot beats.
+        assert "Emergence" in prompt
+        assert "Total length: 20 seconds." in prompt
+        # The shot plan is written for a video model. Pasting it in whole is what
+        # pushed the prompt past ElevenLabs' 4,100-character limit and failed the
+        # node on a 422 that no retry could clear, so the camera direction must
+        # not be carried across.
+        assert "85mm equivalent" not in prompt
+        assert '"tone":"restrained"' not in prompt
+        assert len(prompt) <= MUSIC_PROMPT_LIMIT
         session.expire_all()
         node = await session.get(BuildNode, music_node_id)
         assert node is not None and node.status == "PASSED"
@@ -2056,3 +2073,47 @@ async def test_delivery_worker_stores_seven_assets_and_completes_build(
         }
     finally:
         await _cleanup(session, seeded)
+
+
+def test_music_prompt_stays_within_the_provider_limit_for_a_rich_shot_plan() -> None:
+    """A four-shot plan with production-grade detail must still fit.
+
+    The plan that broke the live build composed to 4,551 characters against a
+    provider limit of 4,100. The failure was terminal — ElevenLabs answers 422,
+    which no retry policy will ever clear — so the whole build died with it.
+    """
+    plan = {
+        "schema_version": "shot_plan.v1",
+        "shots": [
+            {
+                "index": index,
+                "title": f"Shot {index}",
+                "camera": "Low-angle medium shot, 85mm equivalent, f/2.8. " + "x" * 400,
+                "motion": "Slow vertical rise with ease-in and ease-out. " + "y" * 400,
+                "visual_direction": "Deep graphite void, matte white bottle. " + "z" * 600,
+                "duration_seconds": 4,
+            }
+            for index in range(1, 5)
+        ],
+    }
+    prompt = _compose_prompt(
+        "Compose a restrained cinematic bed matching the brief tone.",
+        "ORBIT Hydration launch. Dark graphite set, crisp white bottle.",
+        plan,
+        20,
+    )
+    assert len(prompt) <= MUSIC_PROMPT_LIMIT
+    assert "Shot 1" in prompt and "Shot 4" in prompt
+    assert "85mm equivalent" not in prompt
+
+
+def test_music_prompt_clamps_an_oversized_brief() -> None:
+    """A long brief must not push the prompt past the provider limit."""
+    prompt = _compose_prompt(
+        "Compose a restrained cinematic bed.",
+        "ORBIT. " + "long brief text. " * 500,
+        {"shots": [{"index": 1, "title": "Emergence"}]},
+        20,
+    )
+    assert len(prompt) <= MUSIC_PROMPT_LIMIT
+    assert "Emergence" in prompt
