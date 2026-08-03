@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
-const API_BASE_URL = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
+// Unset on a frontend-only deployment. Falling back to localhost there would make
+// every /api call attempt a connection to the serverless container's own loopback
+// and hang until it times out, which is slower and more confusing than not
+// proxying at all. Set this once the API has a public host and redeploy.
+const API_BASE_URL = process.env.API_BASE_URL;
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -13,6 +17,7 @@ const nextConfig: NextConfig = {
   // and the web tier proxies. Keeps CORS narrow (PRD §19.5) and means no API
   // credential or internal hostname is ever exposed to the client (§7.1).
   async rewrites() {
+    if (!API_BASE_URL) return [];
     return [{ source: "/api/:path*", destination: `${API_BASE_URL}/api/:path*` }];
   },
 };

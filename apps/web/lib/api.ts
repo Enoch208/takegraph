@@ -273,13 +273,30 @@ export type ApiErrorBody = {
   };
 };
 
-const SERVER_API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
+// Absent on a frontend-only deployment. Server components call this during
+// render, so an unreachable loopback address would stall the page; an empty base
+// makes the fetch fail immediately and every caller already degrades on
+// { ok: false }.
+const SERVER_API_BASE = process.env.API_BASE_URL ?? "";
 
 function apiRoot(): string {
   if (typeof window === "undefined") {
     return SERVER_API_BASE;
   }
   return "";
+}
+
+/** No API behind this deployment — a frontend-only preview. */
+const NO_API =
+  "No control plane is configured for this deployment. Set API_BASE_URL to connect one.";
+
+function apiMissing(): boolean {
+  return typeof window === "undefined" && SERVER_API_BASE === "";
+}
+
+/** True when this deployment has no API behind it — the UI says so plainly. */
+export function apiConfigured(): boolean {
+  return typeof window !== "undefined" || SERVER_API_BASE !== "";
 }
 
 async function parseError(response: Response): Promise<string> {
@@ -300,6 +317,9 @@ async function request<T>(
   path: string,
   init: RequestInit & { token?: string } = {},
 ): Promise<Result<T>> {
+  if (apiMissing()) {
+    return { ok: false, error: NO_API };
+  }
   const { token, headers: initHeaders, ...rest } = init;
   const headers = new Headers(initHeaders);
   if (!headers.has("accept")) {

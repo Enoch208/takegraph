@@ -15,10 +15,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const API_BASE = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE = process.env.API_BASE_URL;
 const VERIFY_TIMEOUT_MS = 240_000;
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  if (!API_BASE) {
+    return Response.json(
+      { error: { code: "API_NOT_CONFIGURED", message: "This deployment has no API backend configured." } },
+      { status: 503 },
+    );
+  }
   const { id } = await context.params;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
