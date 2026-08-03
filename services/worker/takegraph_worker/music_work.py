@@ -33,7 +33,6 @@ from takegraph_api.db.models import (
 from takegraph_domain.builds.state_machine import assert_transition
 from takegraph_domain.enums import AttemptMechanism, AttemptStatus, BuildNodeStatus, BuildStatus
 from takegraph_domain.errors import (
-    AssetVerificationError,
     FeatureNotConfiguredError,
     InvalidSourceError,
     NotFoundError,
@@ -179,13 +178,12 @@ class MusicWorkHandlers:
                 return
             await self._persist_provider_result(prepared, result)
 
-        if not await asyncio.to_thread(
-            self._store.verify, result.b2_key, expected_sha256=result.sha256
-        ):
-            # The FETCHING event is already durable, so the queue may safely
-            # retry this storage read without another provider submission.
-            raise AssetVerificationError("Stored music failed independent B2 re-verification.")
-        music_bytes = await asyncio.to_thread(self._store.get_bytes, result.b2_key)
+        # Raises AssetVerificationError on mismatch. The FETCHING event is already
+        # durable, so the queue may safely retry this storage read without another
+        # provider submission.
+        music_bytes = await asyncio.to_thread(
+            self._store.get_verified, result.b2_key, expected_sha256=result.sha256
+        )
         try:
             probe = await asyncio.to_thread(self._prober, music_bytes)
             if probe.media_kind != "AUDIO":
@@ -341,11 +339,10 @@ class MusicWorkHandlers:
         )
         if plan_asset is None or plan_asset.verified_at is None:
             raise InvalidSourceError("Music shot plan is not a verified durable asset.")
-        if not await asyncio.to_thread(
-            self._store.verify, plan_asset.b2_key, expected_sha256=plan_asset.sha256
-        ):
-            raise InvalidSourceError("Music shot plan failed stored-byte verification.")
-        plan_bytes = await asyncio.to_thread(self._store.get_bytes, plan_asset.b2_key)
+        # One download, hashed on the way through — see B2Store.get_verified.
+        plan_bytes = await asyncio.to_thread(
+            self._store.get_verified, plan_asset.b2_key, expected_sha256=plan_asset.sha256
+        )
         try:
             plan = json.loads(plan_bytes)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:

@@ -173,10 +173,38 @@ class B2Store:
         This is what lets a release claim its assets are verified: the bytes are
         fetched back from B2 and hashed, so the claim rests on stored content
         rather than on a record written at upload time.
+
+        Prefer `get_verified` when the caller also needs the bytes — this method
+        downloads them and then throws them away.
         """
         assert_sha256(expected_sha256)
         data = self._backend.get(key)
         return hashlib.sha256(data).hexdigest() == expected_sha256
+
+    def get_verified(self, key: str, *, expected_sha256: str) -> bytes:
+        """Fetch an object and return it only if its bytes hash as expected.
+
+        Identical guarantee to `verify` followed by `get_bytes` — the bytes are
+        re-read from B2 and re-hashed, never trusted from the database record
+        (§8.3.7) — but over one download instead of two.
+
+        The pair was the common shape across the handlers, and it was billing two
+        B2 Class B transactions and twice the egress for every input a node
+        consumes. That is real money and a real daily transaction cap, and on a
+        large asset it is also the slowest thing a node does.
+
+        Raises rather than returning None: every caller of the old pair treated a
+        hash mismatch as fatal, and an unverified input must not satisfy a
+        dependency.
+        """
+        assert_sha256(expected_sha256)
+        data = self._backend.get(key)
+        actual = hashlib.sha256(data).hexdigest()
+        if actual != expected_sha256:
+            raise AssetVerificationError(
+                f"Stored bytes for {key} hash to {actual}, not the expected {expected_sha256}."
+            )
+        return data
 
     def exists(self, key: str) -> bool:
         return self._backend.exists(key)

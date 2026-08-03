@@ -153,13 +153,18 @@ class EndCardWorkHandlers:
             if copy_asset is None or product_asset is None:
                 raise InvalidSourceError("End-card inputs are not durable indexed assets.")
             for asset in (copy_asset, product_asset):
-                if asset.verified_at is None or not await asyncio.to_thread(
-                    self._store.verify, asset.b2_key, expected_sha256=asset.sha256
-                ):
+                if asset.verified_at is None:
                     raise InvalidSourceError("End-card input failed stored-byte verification.")
+            # One download each, hashed on the way through.
             copy_bytes, product_bytes = await asyncio.gather(
-                asyncio.to_thread(self._store.get_bytes, copy_asset.b2_key),
-                asyncio.to_thread(self._store.get_bytes, product_asset.b2_key),
+                asyncio.to_thread(
+                    self._store.get_verified, copy_asset.b2_key, expected_sha256=copy_asset.sha256
+                ),
+                asyncio.to_thread(
+                    self._store.get_verified,
+                    product_asset.b2_key,
+                    expected_sha256=product_asset.sha256,
+                ),
             )
             copy_pack = CopyPack.model_validate_json(copy_bytes)
             parameters = revision.spec_json.get("parameters", {})

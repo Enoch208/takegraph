@@ -44,6 +44,7 @@ from takegraph_domain.enums import (
     BuildStatus,
     Role,
 )
+from takegraph_domain.errors import AssetVerificationError
 from takegraph_domain.execution.idempotency import submission_idempotency_key
 from takegraph_domain.generation import (
     AttemptRef,
@@ -148,6 +149,13 @@ class MemoryStore:
 
     def get_bytes(self, key: str) -> bytes:
         return self.objects[key]
+
+    def get_verified(self, key: str, *, expected_sha256: str) -> bytes:
+        # Routed through verify() so subclasses that override verify to simulate
+        # a storage fault still exercise that fault through this path.
+        if not self.verify(key, expected_sha256=expected_sha256):
+            raise AssetVerificationError(f"Stored bytes for {key} did not match {expected_sha256}.")
+        return self.get_bytes(key)
 
     def key_from_url(self, url: str) -> str | None:
         prefix = "https://memory.invalid/"

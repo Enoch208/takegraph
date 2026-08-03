@@ -179,13 +179,12 @@ class PlanWorkHandlers:
                 raise FeatureNotConfiguredError("plan.shots requires Anthropic.")
             brief = self._brief(revision)
             product_asset = await self._product_asset(session, build, project)
-            if not await asyncio.to_thread(
-                self._store.verify,
+            # One download, hashed on the way through — see B2Store.get_verified.
+            product_bytes = await asyncio.to_thread(
+                self._store.get_verified,
                 product_asset.b2_key,
                 expected_sha256=product_asset.sha256,
-            ):
-                raise InvalidSourceError("Shot-plan product input failed B2 verification.")
-            product_bytes = await asyncio.to_thread(self._store.get_bytes, product_asset.b2_key)
+            )
 
             attempt = await session.scalar(
                 select(Attempt)

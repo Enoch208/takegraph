@@ -122,16 +122,12 @@ class NarrationWorkHandlers:
         raw_key = self._store.key_from_url(result.asset.durable_url)
         if raw_key is None:
             raise InvalidSourceError("Narration manifest URL does not belong to the work bucket.")
-        raw_verified = await asyncio.to_thread(
-            self._store.verify,
+        # One download, hashed on the way through — see B2Store.get_verified.
+        raw_bytes = await asyncio.to_thread(
+            self._store.get_verified,
             raw_key,
             expected_sha256=result.asset.sha256,
         )
-        if not raw_verified:
-            raise InvalidSourceError(
-                "Stored provider narration failed independent re-verification."
-            )
-        raw_bytes = await asyncio.to_thread(self._store.get_bytes, raw_key)
         normalized, probe = await asyncio.to_thread(self._normalizer, raw_bytes)
         digest = hashlib.sha256(normalized).hexdigest()
         normalized_key = content_address(
@@ -269,11 +265,9 @@ class NarrationWorkHandlers:
         )
         if asset is None or asset.verified_at is None:
             raise InvalidSourceError("Narration copy input is not a verified durable asset.")
-        data = await asyncio.to_thread(self._store.get_bytes, asset.b2_key)
-        if not await asyncio.to_thread(
-            self._store.verify, asset.b2_key, expected_sha256=asset.sha256
-        ):
-            raise InvalidSourceError("Narration copy input failed stored-byte verification.")
+        data = await asyncio.to_thread(
+            self._store.get_verified, asset.b2_key, expected_sha256=asset.sha256
+        )
         try:
             return CopyPack.model_validate_json(data)
         except ValueError as exc:
