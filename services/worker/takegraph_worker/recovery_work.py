@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import cast
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,8 +84,36 @@ async def _budget(session: AsyncSession, node: BuildNode) -> AttemptBudget:
     )
 
 
+_PLACEHOLDER = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
+
+
+def resolve_placeholders(value: object, env: Mapping[str, str]) -> object:
+    """Expand ${VAR} against the environment, recursively.
+
+    §9.2: "Environment placeholders are resolved server-side when a policy
+    becomes an execution plan." A policy is stored with its placeholders intact
+    so the same row works across environments, which means anything reading it
+    for execution has to resolve them. Leaving a fallback as a literal
+    "${GMI_VIDEO_FALLBACK_MODEL}" makes it look unconfigured, and recovery
+    silently skips a fallback that was in fact available.
+
+    A variable with no value stays as its placeholder, so the caller can tell the
+    difference between "not configured" and "configured as empty".
+    """
+    if isinstance(value, str):
+        match = _PLACEHOLDER.match(value)
+        if match is None:
+            return value
+        return env.get(match.group(1)) or value
+    if isinstance(value, list):
+        return [resolve_placeholders(item, env) for item in value]
+    if isinstance(value, dict):
+        return {key: resolve_placeholders(item, env) for key, item in value.items()}
+    return value
+
+
 async def _policy_definition(session: AsyncSession, node: BuildNode) -> dict:
-    """The node's resolved provider policy, or an empty policy.
+    """The node's provider policy with placeholders resolved, or an empty policy.
 
     An empty policy is not a silent default: `decide_recovery` reads it as no
     fallbacks and default budgets, so the node fails after its retries rather
@@ -94,7 +125,10 @@ async def _policy_definition(session: AsyncSession, node: BuildNode) -> dict:
     if graph_node is None or graph_node.provider_policy_id is None:
         return {}
     policy = await session.get(ProviderPolicy, graph_node.provider_policy_id)
-    return dict(policy.definition_json) if policy else {}
+    if policy is None:
+        return {}
+    resolved = resolve_placeholders(dict(policy.definition_json), os.environ)
+    return cast("dict", resolved)
 
 
 async def plan_recovery(
