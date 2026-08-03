@@ -33,10 +33,10 @@ from takegraph_api.db.models import (
     SourceVersion,
 )
 from takegraph_domain.builds.state_machine import assert_transition
-from takegraph_domain.canonical import JsonValue, canonical_hash
+from takegraph_domain.canonical import JsonValue
 from takegraph_domain.enums import BuildNodeStatus, BuildStatus
 from takegraph_domain.errors import AssetVerificationError, InvalidSourceError, NotFoundError
-from takegraph_domain.graph.orbit import DEFAULT_BRIEF_TEXT, PARAM_BRIEF_TEXT
+from takegraph_domain.graph.source_content import brief_hash_from_spec
 
 from takegraph_worker.build_work import schedule_ready_nodes
 
@@ -46,19 +46,12 @@ SOURCE_KEYS = frozenset({"source.brief", "source.product_reference"})
 def brief_content_hash(spec: dict[str, JsonValue]) -> str:
     """Content hash for the normalized brief.
 
-    Must match the hash the impact engine used when it decided this node was
-    invalid, or the node would resolve to a value that disagrees with the plan
-    that scheduled it.
+    Must match the hash the impact engine uses when it decides whether this node
+    can be reused, so both call one shared definition. They did not, once, and a
+    resolved source node could never satisfy the reuse proof — see
+    takegraph_domain.graph.source_content for what that cost.
     """
-    parameters = spec.get("parameters", {})
-    value = (
-        parameters.get(PARAM_BRIEF_TEXT, DEFAULT_BRIEF_TEXT)
-        if isinstance(parameters, dict)
-        else None
-    )
-    if not isinstance(value, str):
-        raise InvalidSourceError("brief_text must be a string.")
-    return canonical_hash({"brief_text": value})
+    return brief_hash_from_spec(dict(spec))
 
 
 class SourceNodeHandlers:

@@ -11,7 +11,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import os
-import unicodedata
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -38,11 +37,10 @@ from takegraph_domain.graph.compiler import compile_graph
 from takegraph_domain.graph.fingerprint import GENERATOR_CODE_VERSION
 from takegraph_domain.graph.impact import ImpactPlan, NodeImpact, compute_impact
 from takegraph_domain.graph.orbit import (
-    DEFAULT_BRIEF_TEXT,
     ORBIT_TEMPLATE,
-    PARAM_BRIEF_TEXT,
 )
 from takegraph_domain.graph.orbit_policies import orbit_policy_hashes
+from takegraph_domain.graph.source_content import brief_hash_from_spec
 from takegraph_domain.graph.types import CompiledGraph, NodeCacheState
 
 from takegraph_api.auth import require_permission
@@ -1003,16 +1001,13 @@ def _compile(spec: dict[str, JsonValue]) -> CompiledGraph:
 
 
 def _brief_hash(spec: dict[str, Any]) -> str:
-    parameters = spec.get("parameters", {})
-    value = (
-        parameters.get(PARAM_BRIEF_TEXT, DEFAULT_BRIEF_TEXT)
-        if isinstance(parameters, dict)
-        else None
-    )
-    if not isinstance(value, str):
-        raise InvalidSourceError("brief_text must be a string.")
-    normalized = " ".join(unicodedata.normalize("NFC", value).split())
-    return hashlib.sha256(normalized.encode()).hexdigest()
+    """The shared definition — see takegraph_domain.graph.source_content.
+
+    This used to compute the hash here and the worker computed a different one,
+    so a resolved source node could never satisfy the reuse proof and every change
+    invalidated the whole graph.
+    """
+    return brief_hash_from_spec(spec)
 
 
 def _provider_configuration(env: Mapping[str, str]) -> dict[str, JsonValue]:
