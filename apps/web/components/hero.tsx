@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { GraphBackdrop } from "@/components/graph-backdrop";
+import { HeroBackdrop } from "@/components/hero-backdrop";
 import { Icon } from "@/components/icon";
 import type { Result, DemoProof } from "@/lib/api";
 
@@ -32,7 +32,7 @@ function Words({ words, delay }: { words: typeof LINE_ONE; delay: string }) {
 export function Hero({ proof }: { proof: Result<DemoProof> }) {
   return (
     <section className="relative flex min-h-[860px] w-full flex-col items-center overflow-hidden pt-36 md:pt-40">
-      <GraphBackdrop />
+      <HeroBackdrop />
 
       <div className="relative z-10 mx-auto mb-14 max-w-5xl px-6 text-center">
         <div
