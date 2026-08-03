@@ -34,11 +34,18 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, Response
 from genblaze_core.exceptions import StorageError
 from PIL import Image
-from takegraph_domain.errors import InvalidSourceError, StorageUnavailableError
+from sqlalchemy import select
+from takegraph_domain.errors import (
+    InvalidSourceError,
+    NotFoundError,
+    StorageUnavailableError,
+)
 from takegraph_infrastructure.b2 import B2Settings, B2Store
 from takegraph_infrastructure.media import extract_poster_frame
 
+from takegraph_api.db.models import Asset, AttemptAsset, BuildNode
 from takegraph_api.db.session import session_scope
+from takegraph_api.projection import POSTER_KEY
 from takegraph_api.projects import AssetAccessService, MemberPrincipal
 
 router = APIRouter(prefix="/api/v1", tags=["assets"])
@@ -153,6 +160,61 @@ async def asset_thumbnail(asset_id: uuid.UUID, principal: MemberPrincipal) -> Re
     encoded = await asyncio.to_thread(_render, data, mime_type)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Write then rename so a concurrent reader never sees a half-written file.
+    staging = path.with_suffix(f".{uuid.uuid4().hex}.part")
+    staging.write_bytes(encoded)
+    staging.replace(path)
+    return Response(content=encoded, media_type="image/webp", headers=headers)
+
+
+@router.get("/assets/{asset_id}/poster")
+async def public_poster(asset_id: uuid.UUID) -> Response:
+    """The demo poster, unauthenticated and cacheable.
+
+    The landing page is public, so it cannot send a bearer token, and it is
+    incrementally regenerated, so it must not embed anything that expires. This
+    serves the same content-addressed thumbnail as the authorised route.
+
+    Scope is the reason this is safe to leave open: it resolves only the poster
+    node of the build the public proof endpoint already describes. It is not a
+    general asset reader — any other id is a 404, so it cannot be walked to reach
+    an asset the demo does not already publish.
+    """
+    async with session_scope() as session:
+        row = await session.execute(
+            select(Asset)
+            .join(AttemptAsset, AttemptAsset.asset_id == Asset.id)
+            .join(BuildNode, BuildNode.selected_attempt_id == AttemptAsset.attempt_id)
+            .where(
+                Asset.id == asset_id,
+                BuildNode.stable_key == POSTER_KEY,
+                AttemptAsset.selected.is_(True),
+                Asset.verified_at.is_not(None),
+            )
+            .limit(1)
+        )
+        asset = row.scalar_one_or_none()
+        if asset is None:
+            raise NotFoundError("Poster not found.")
+        sha256, b2_key, mime_type = asset.sha256, asset.b2_key, asset.mime_type
+
+    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+    path = cache_path(sha256)
+    if path.exists():
+        return FileResponse(path, media_type="image/webp", headers=headers)
+
+    store = B2Store(B2Settings.from_env(dict(os.environ)))
+    try:
+        data = await asyncio.to_thread(store.get_verified, b2_key, expected_sha256=sha256)
+    except (StorageError, ClientError, BotoCoreError, OSError) as exc:
+        raise StorageUnavailableError(
+            "Durable storage would not serve the poster bytes.",
+            details={"reason": str(exc)[:200]},
+        ) from exc
+    finally:
+        store.close()
+
+    encoded = await asyncio.to_thread(_render, data, mime_type)
+    path.parent.mkdir(parents=True, exist_ok=True)
     staging = path.with_suffix(f".{uuid.uuid4().hex}.part")
     staging.write_bytes(encoded)
     staging.replace(path)

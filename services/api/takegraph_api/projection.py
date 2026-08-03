@@ -200,15 +200,25 @@ def build_demo_proof() -> DemoProof:
 async def _poster_preview_url(
     session: AsyncSession, build_id: uuid.UUID, sign: Callable[[str], str]
 ) -> str | None:
-    """Short-lived signed URL for the build's selected poster asset.
+    """A same-origin path to the build's selected poster asset.
 
     §18.5 asks the landing page for a real ORBIT media preview. Returning None
     rather than a placeholder is deliberate: a page that shows stock art where it
     promises real output is the "unlabeled demo data on a live-looking path" that
     §0.1 forbids. No poster, no preview.
+
+    This used to return a 15-minute presigned B2 URL. The landing page is
+    incrementally regenerated, so that URL was baked into cached HTML and served
+    to whoever arrived next — after a quiet spell that visitor received a page
+    carrying an already-expired link, B2 answered 403, and the card rendered a
+    broken image on the first thing anyone sees.
+
+    An identifier has no expiry, so the identifier is what gets cached. The route
+    it points at resolves the bytes at request time.
     """
+    del sign
     row = await session.execute(
-        select(Asset.b2_key)
+        select(Asset.id)
         .join(AttemptAsset, AttemptAsset.asset_id == Asset.id)
         .join(BuildNode, BuildNode.selected_attempt_id == AttemptAsset.attempt_id)
         .where(
@@ -220,8 +230,8 @@ async def _poster_preview_url(
         )
         .limit(1)
     )
-    key = row.scalar_one_or_none()
-    return None if key is None else sign(key)
+    asset_id = row.scalar_one_or_none()
+    return None if asset_id is None else f"/api/v1/assets/{asset_id}/poster"
 
 
 async def load_demo_proof(
@@ -254,3 +264,6 @@ async def load_demo_proof(
     if sign is not None and event.build_id is not None:
         payload["poster_url"] = await _poster_preview_url(session, event.build_id, sign)
     return DemoProof.model_validate(payload)
+
+
+__all__ = ["POSTER_KEY", "DemoProof", "load_demo_proof"]
