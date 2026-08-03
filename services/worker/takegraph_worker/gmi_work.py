@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import gettempdir
@@ -23,6 +23,7 @@ from takegraph_api.db.models import (
     Build,
     BuildNode,
     DomainEvent,
+    FaultRule,
     GraphNode,
     Project,
     ProviderPolicy,
@@ -44,6 +45,14 @@ from takegraph_domain.errors import (
     FeatureNotConfiguredError,
     InvalidSourceError,
     NotFoundError,
+)
+from takegraph_domain.execution.faults import (
+    FaultRule as FaultRuleSpec,
+)
+from takegraph_domain.execution.faults import (
+    FaultType,
+    InjectedFault,
+    select_fault,
 )
 from takegraph_domain.execution.idempotency import submission_idempotency_key
 from takegraph_domain.generation import (
@@ -72,6 +81,10 @@ class PreparedGMIWork:
     project_id: uuid.UUID
     media_kind: str
     done: bool = False
+    injected_fault: str | None = None
+    """Set when a labelled fault rule matched this node. §4.4 requires the UI to
+    show TEST FAULT, and the provider is never contacted — an injected fault must
+    not consume real quota."""
 
 
 class GMIWorkHandlers:
@@ -93,6 +106,19 @@ class GMIWorkHandlers:
     async def execute_build_node(self, build_node_id: uuid.UUID) -> None:
         prepared = await self._prepare(build_node_id)
         if prepared.done:
+            return
+        if prepared.injected_fault is not None:
+            # Fail without contacting the provider. The failure then travels the
+            # ordinary recovery path, so what a judge sees afterwards — the
+            # fallback attempt, its lineage, its routing reason — is genuine
+            # behaviour rather than a staged sequence.
+            fault = FaultType(prepared.injected_fault)
+            await self._fail(
+                prepared,
+                error_class=str(fault.error_class),
+                error_code=f"TEST_FAULT_{fault.value}",
+                message=str(InjectedFault(fault, prepared.request.stable_key)),
+            )
             return
         durable: DurableGenerationAsset | None = None
         completed = False
@@ -256,10 +282,22 @@ class GMIWorkHandlers:
                 ),
                 status=str(AttemptStatus.SUBMITTING),
             )
+            # §8.3.11: injection requires the flag AND a demo-scoped project.
+            # Checked here, at the moment of submission, so a rule armed while the
+            # flag was on cannot fire after it has been turned off.
+            fault = await self._matched_fault(session, project, node)
+            if fault is not None:
+                attempt.is_injected_fault = True
+
             session.add(attempt)
-            self._attempt_event(session, attempt.id, "attempt.submitting", {})
+            self._attempt_event(
+                session,
+                attempt.id,
+                "attempt.submitting",
+                {"injected_fault": fault.value} if fault else {},
+            )
             await session.commit()
-            return await self._prepared(
+            prepared = await self._prepared(
                 build,
                 project,
                 node,
@@ -271,6 +309,66 @@ class GMIWorkHandlers:
                 timeout,
                 resume_provider_request_id=resume_request_id,
             )
+            if fault is None:
+                return prepared
+            return replace(prepared, injected_fault=fault.value)
+
+    async def _matched_fault(
+        self, session: AsyncSession, project: Project, node: BuildNode
+    ) -> FaultType | None:
+        """Consume an armed fault rule for this node, if injection is permitted.
+
+        Consuming here rather than at match time is deliberate: a rule that
+        matched but stayed armed would break every subsequent attempt, turning a
+        one-off demonstration into a permanently failing node.
+        """
+        rows = (
+            (
+                await session.execute(
+                    select(FaultRule).where(
+                        FaultRule.project_id == project.id,
+                        FaultRule.node_stable_key == node.stable_key,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not rows:
+            return None
+
+        now = datetime.now(UTC)
+        specs = [
+            FaultRuleSpec(
+                id=row.id,
+                project_id=row.project_id,
+                node_stable_key=row.node_stable_key,
+                fault_type=FaultType(row.fault_type),
+                remaining_uses=row.remaining_uses,
+                expires_at=(
+                    row.expires_at.replace(tzinfo=UTC)
+                    if row.expires_at is not None and row.expires_at.tzinfo is None
+                    else row.expires_at
+                ),
+            )
+            for row in rows
+        ]
+        chosen = select_fault(
+            specs,
+            stable_key=node.stable_key,
+            now=now,
+            allow_failure_injection=self._environment.get("ALLOW_FAILURE_INJECTION", "").lower()
+            == "true",
+            project_is_demo=bool(project.is_demo),
+        )
+        if chosen is None:
+            return None
+
+        for row in rows:
+            if row.id == chosen.id:
+                row.remaining_uses -= 1
+                break
+        return chosen.fault_type
 
     async def _prepared(
         self,

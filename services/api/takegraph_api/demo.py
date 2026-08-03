@@ -18,6 +18,7 @@ import os
 import secrets
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -25,7 +26,8 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from takegraph_domain.auth import Permission, Principal, authorize_project
 from takegraph_domain.enums import Role
-from takegraph_domain.errors import NotFoundError
+from takegraph_domain.errors import InvalidSourceError, NotFoundError
+from takegraph_domain.execution.faults import FaultType, assert_injection_allowed
 from takegraph_domain.graph.orbit import PARAM_BRIEF_TEXT, PARAM_LEGAL_LINE
 
 from takegraph_api.auth import SessionClaims, get_principal, session_provider_from_env
@@ -38,6 +40,7 @@ from takegraph_api.db.models import (
     ProjectRevision,
     Release,
 )
+from takegraph_api.db.models import FaultRule as FaultRuleRow
 from takegraph_api.db.session import session_scope
 
 router = APIRouter(prefix="/api/v1", tags=["demo"])
@@ -212,4 +215,87 @@ async def get_demo_project(
             release_id=str(release.id) if release else "",
             release_version=release.version_label if release else "",
             release_status=release.status if release else "",
+        )
+
+
+class FaultRuleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_stable_key: str
+    fault_type: str = str(FaultType.PROVIDER_TIMEOUT)
+    remaining_uses: int = 1
+    ttl_seconds: int = 3600
+
+
+class FaultRuleResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    node_stable_key: str
+    fault_type: str
+    remaining_uses: int
+    expires_at: datetime
+
+
+@router.post("/demo/fault-rules", response_model=FaultRuleResponse, status_code=201)
+async def create_fault_rule(
+    body: FaultRuleRequest,
+    principal: Annotated[Principal, Depends(get_principal)],
+) -> FaultRuleResponse:
+    """Arm a labelled, expiring failure rule (§11.3, §8.3.11).
+
+    Owner/editor only — a guest can watch a recovery but must not be able to
+    break the build for everyone else. `assert_injection_allowed` then requires
+    both ALLOW_FAILURE_INJECTION and a demo-scoped project, so an operator cannot
+    arm one against a real production by mistake.
+
+    Rules expire and are consumed. §4.4 requires the resulting failure to be
+    labelled TEST FAULT, which the worker does by setting
+    `attempts.is_injected_fault`.
+    """
+    async with session_scope() as session:
+        project, _ = await _resolve_demo_project(session)
+        authorize_project(
+            principal,
+            project_id=project.id,
+            project_organization_id=project.organization_id,
+            permission=Permission.RUN_BUILD,
+        )
+        assert_injection_allowed(
+            allow_failure_injection=os.environ.get("ALLOW_FAILURE_INJECTION", "").lower() == "true",
+            project_is_demo=bool(project.is_demo),
+        )
+
+        try:
+            fault_type = FaultType(body.fault_type)
+        except ValueError as exc:
+            raise InvalidSourceError(
+                f"Unknown fault type {body.fault_type!r}. "
+                f"Expected one of: {', '.join(sorted(f.value for f in FaultType))}."
+            ) from exc
+
+        if body.remaining_uses < 1:
+            raise InvalidSourceError("remaining_uses must be at least 1.")
+
+        expires_at = datetime.now(UTC) + timedelta(seconds=max(60, body.ttl_seconds))
+        rule = FaultRuleRow(
+            id=uuid.uuid4(),
+            project_id=project.id,
+            node_stable_key=body.node_stable_key,
+            fault_type=str(fault_type),
+            remaining_uses=body.remaining_uses,
+            expires_at=expires_at,
+            created_by=principal.actor_id,
+        )
+        session.add(rule)
+        await session.flush()
+
+        return FaultRuleResponse(
+            id=rule.id,
+            project_id=rule.project_id,
+            node_stable_key=rule.node_stable_key,
+            fault_type=rule.fault_type,
+            remaining_uses=rule.remaining_uses,
+            expires_at=expires_at,
         )
