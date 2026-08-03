@@ -19,8 +19,10 @@ from takegraph_domain.errors import DomainError, FeatureNotConfiguredError
 from takegraph_infrastructure.b2 import B2Settings, B2Store
 
 from takegraph_api.b2_webhooks import router as b2_webhook_router
+from takegraph_api.builds import router as builds_router
 from takegraph_api.changes import router as changes_router
 from takegraph_api.db.session import session_scope
+from takegraph_api.demo import router as demo_router
 from takegraph_api.projection import DemoProof, load_demo_proof
 from takegraph_api.projects import router as projects_router
 from takegraph_api.uploads import router as uploads_router
@@ -34,6 +36,8 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 app.include_router(b2_webhook_router)
+app.include_router(builds_router)
+app.include_router(demo_router)
 app.include_router(changes_router)
 app.include_router(projects_router)
 app.include_router(uploads_router)
