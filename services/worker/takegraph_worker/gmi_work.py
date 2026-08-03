@@ -157,10 +157,51 @@ class GMIWorkHandlers:
                 return await self._prepared(
                     build, project, node, attempt, graph_node, policy, (), model, timeout, True
                 )
-            if attempt is not None:
+            # A node parked by the recovery policy is legitimately runnable again,
+            # and its previous attempt is legitimately FAILED. Recovery intent is
+            # read from persisted state rather than the work-item payload: §6.3
+            # makes PostgreSQL authoritative, and a payload can be stale or lost
+            # while the node's status and attempt history cannot.
+            recovering = node.status in {
+                str(BuildNodeStatus.RETRY_PENDING),
+                str(BuildNodeStatus.FALLBACK_PENDING),
+            }
+            parent_attempt: Attempt | None = None
+            mechanism = AttemptMechanism.PRIMARY
+
+            if recovering:
+                if attempt is None or attempt.status != str(AttemptStatus.FAILED):
+                    raise InvalidSourceError(
+                        "GMI node is parked for recovery but has no failed attempt to recover from."
+                    )
+                parent_attempt = attempt
+                decision = await plan_recovery(
+                    session,
+                    node=node,
+                    error_class=attempt.error_class or "INTERNAL",
+                    current_model=attempt.model or model,
+                )
+                if not decision.should_retry:
+                    raise InvalidSourceError(
+                        f"GMI node is parked for recovery but the policy declines it: "
+                        f"{decision.reason_code}."
+                    )
+                # The decision governs the submission — recomputing it here from
+                # the same persisted state yields the same answer that scheduled
+                # this work item.
+                mechanism = decision.mechanism or AttemptMechanism.SAME_PROVIDER_RETRY
+                model = decision.model or model
+                provider = decision.provider or provider
+                timeout = decision.timeout_seconds or timeout
+                assert_transition(
+                    BuildNodeStatus(node.status), BuildNodeStatus.QUEUED, subject="node"
+                )
+                node.status = str(BuildNodeStatus.QUEUED)
+            elif attempt is not None:
                 raise InvalidSourceError(
                     f"GMI attempt cannot be submitted again from {attempt.status}; reconcile it."
                 )
+
             if node.status != str(BuildNodeStatus.QUEUED):
                 raise InvalidSourceError(f"GMI node is not runnable from {node.status}.")
             if build.status not in {str(BuildStatus.QUEUED), str(BuildStatus.RUNNING)}:
@@ -194,15 +235,24 @@ class GMIWorkHandlers:
                 id=uuid.uuid4(),
                 build_node_id=node.id,
                 attempt_no=attempt_no,
-                mechanism=str(AttemptMechanism.PRIMARY),
+                mechanism=str(mechanism),
+                # §14.3 lineage: a recovery attempt points at the attempt it is
+                # recovering from, so the inspector can show the chain rather
+                # than a set of unrelated tries.
+                parent_attempt_id=parent_attempt.id if parent_attempt else None,
                 provider=provider,
                 model=model,
                 idempotency_key=submission_idempotency_key(
                     build_node_id=node.id,
                     fingerprint=node.fingerprint,
-                    mechanism=AttemptMechanism.PRIMARY,
+                    mechanism=mechanism,
                     provider=provider,
                     model=model,
+                    # §13.2: the logical attempt slot is what lets a deliberate
+                    # re-run key differently. Two same-provider retries of one
+                    # node would otherwise collide on an identical key and the
+                    # second would be rejected as a duplicate submission.
+                    logical_attempt_slot=attempt_no - 1,
                 ),
                 status=str(AttemptStatus.SUBMITTING),
             )
