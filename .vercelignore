@@ -1,0 +1,31 @@
+# Vercel builds only the Next.js app. Everything the frontend does not need is
+# excluded — without this the CLI tries to upload 2.5 GB (captured video frames,
+# a Python virtualenv, local build output) and the upload aborts.
+.venv
+video
+node_modules
+**/node_modules
+.next
+apps/web/.next
+.git
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.cache
+
+# Backend and tooling — not part of the frontend build.
+services
+packages/domain
+packages/infrastructure
+packages/contracts
+infra
+scripts
+docs
+assets
+*.md
+!README.md
+.env
+.env.*
