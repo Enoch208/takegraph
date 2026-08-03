@@ -79,3 +79,5 @@ apps/web/next-env.d.ts
 
 # Demo video pipeline: renders, captured frames, and video/.env.local (API key).
 video/
+.vercel
+.env*

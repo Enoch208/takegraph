@@ -150,3 +150,147 @@ ffmpeg  pillow  puppeteer  docker  pytest  server-sent-events
 
 - **Code:** https://github.com/Enoch208/takegraph
 - *(add a second link only if you deploy — do not link a dead domain)*
+
+---
+
+## Providers and models
+
+Five AI providers across the 18-node ORBIT graph. Nothing is hardcoded: every
+model ID is declared in a versioned provider policy
+(`packages/domain/takegraph_domain/graph/orbit_policies.py`) and resolved from
+the environment at build time.
+
+| Provider | Model | What it produces | Nodes | Policy |
+|---|---|---|---|---|
+| **Anthropic** | `claude-sonnet-4-6` | Shot plan (`STRUCTURED_PLAN`) and copy pack (`STRUCTURED_TEXT`) | 2 | `orbit-text-v1` |
+| **GMI Cloud** | `seedream-5.0-pro` | Keyframe stills (`IMAGE_GENERATION`) | 4 | `orbit-image-v1` |
+| **GMI Cloud** | `pixverse-v6-i2v` | Image-to-video clips (`VIDEO_GENERATION`) | 4 | `orbit-video-v1` |
+| **GMI Cloud** | `kling-v3-image-to-video` | Same-provider fallback rung for video | — | `orbit-video-v1` |
+| **ElevenLabs** | `eleven_multilingual_v2` | Narration TTS (voice `EXAVITQu4vr4xnSDxMaL`) | 1 | `orbit-tts-v1` |
+| **ElevenLabs** | `music_v2` | Music bed (`mp3_48000_192`) | 1 | `orbit-audio-v1` |
+| **Runway** | *credential-gated* | Cross-provider fallback rung for video | — | `orbit-video-v1` |
+
+The remaining 6 of 18 nodes call no model at all — 2 resolved sources, one image
+transform, and three composition nodes (end card, poster, delivery master) that
+run locally on Pillow and ffmpeg. A build system's job is to know which work
+needs a provider and which does not.
+
+**The model is part of the identity of the output, not metadata about it.** Each
+node's fingerprint includes `resolved_provider_policy_hash`
+(`graph/fingerprint.py:69`), so changing a model ID changes the policy hash,
+which changes the fingerprint, which forces a rebuild of that node and
+everything downstream. You cannot silently swap models and keep the cache. Every
+attempt row also persists the exact `model` that ran, which is what makes the
+provenance panel — *"which model produced this frame, and did it pass review?"* —
+answerable from the record instead of from memory.
+
+**The fallback ladder is declarative, in priority order.** Video is the only
+modality with a full ladder because it is the expensive, flaky one:
+`pixverse-v6-i2v` → `kling-v3-image-to-video` (same provider, new model) →
+Runway (different vendor, gated on `RUNWAYML_API_SECRET` being present). The
+rungs are chosen by `genblaze_core`'s typed `ProviderErrorCode`, never by
+string-matching an error message. In the filmed run the transient rung recovered
+on attempt 2, so the cross-vendor rung is implemented and unit-tested but has not
+fired against a live vendor outage — I am not claiming a failover I have not
+watched happen.
+
+**Configuration is fail-loud.** Every gateway resolves its credentials and model
+through a `from_env` that raises `FeatureNotConfiguredError` naming the missing
+variable. A missing key never degrades into a fixture that looks like a real
+generation. The music gateway additionally rejects any model outside
+`{music_v1, music_v2}` at construction, because the pinned SDK supports no others.
+
+*Separate from the product:* the demo film itself is generated, not screen-recorded
+— Puppeteer drives the live application, ElevenLabs `eleven_v3` narrates over the
+`/v1/music` endpoint, and ffmpeg assembles.
+
+---
+
+## B2 and Genblaze usage
+
+Both are load-bearing, and they interlock: **Genblaze generates the bytes and
+lands them in B2 under a content-addressed key; B2 is what later proves those
+bytes are still the same bytes.** Take either one out and incremental rebuild
+stops being provable.
+
+### Backblaze B2 — the mechanism, not the destination
+
+I went in thinking B2 was where the files go. Building the reuse proof changed
+that. Because keys **are** hashes, *"is this the same work?"* and *"are these the
+same bytes?"* collapse into one question — and that is the whole product.
+
+Every asset lands at `tenants/{org}/cas/sha256/aa/bb/{sha256}.{ext}`
+(`domain/storage/keys.py:75`) through `takegraph_infrastructure.b2.B2Store`,
+built on `genblaze_s3.S3StorageBackend` — one S3 client, so there is one auth
+path and one retry policy to reason about. The governing rule is that
+`assets.sha256` is the hash of the bytes **we** stored, never a provider's claim:
+`store_bytes` hashes what it was handed, `verify` re-reads and re-hashes, and
+nothing in the module takes a caller's word about content.
+
+That buys three things the build system cannot work without:
+
+- **Dedupe is free and automatic.** Two builds producing identical bytes converge
+  on one object, and `StoredObject.deduplicated` reports it. That is what makes
+  "14 nodes reused" cheap rather than a bookkeeping fiction.
+- **Reuse is proven, not assumed.** Two of the reuse proof's conditions are B2
+  reads: `assets_present` (*"a selected asset is no longer present in B2"*) and
+  `assets_verified` (*"stored bytes no longer match the recorded SHA-256"*). A
+  Postgres row asserting an asset exists is never trusted on its own.
+- **A release is verifiable by a third party.** The manifest is a list of hashes;
+  anyone can re-derive them from the bucket.
+
+The integration goes well past `put_object`:
+
+- **Two buckets, two least-privilege keys** — a work bucket for build artifacts, a
+  release bucket for published masters, each with its own scoped application key.
+  A test asserts the work key is *refused* against the release bucket. The master
+  key is used exactly once as a setup key, and `scripts/b2_setup.py` **raises**
+  rather than ever minting a key carrying `bypassGovernance`.
+- **HMAC-signed B2 Event Notifications.** The webhook verifies the HMAC over the
+  exact raw body *before* parsing JSON, persists and deduplicates the message, and
+  queues only a reference — no media work runs in the request, which keeps the
+  acknowledgement inside Backblaze's three-second timeout. A periodic reconciler
+  sweeps up object-created events missed while the worker was down.
+- **Presigned PUT/GET only**, generated on demand after authorization, 900-second
+  TTL, never persisted.
+- **Object Lock retention is read back from B2** and reported honestly as
+  `NOT_CONFIGURED` rather than assumed.
+- **Live release verification, open to guests.** Hitting *Verify* does not read a
+  flag — it re-downloads every byte from B2 and re-hashes it. 8 assets in 6.7s
+  (78s before the checks were parallelised). A proof only the author can run is
+  worth very little.
+- **A content-addressed WebP poster cache.** Eighteen storyboard tiles were
+  pointing browsers at full-resolution originals — 18 Class B transactions *per
+  page view*, uncacheable because a presigned URL carries a fresh signature. Since
+  a thumbnail derives from immutable bytes, it is keyed by the source asset's
+  SHA-256 and never invalidated: first request costs one B2 read, every request
+  after costs none. 14s → 1.16s, 18 requests → 2, ~6 MB → ~174 KB.
+
+### Genblaze — the generation layer and the typed contracts
+
+Four pinned packages: `genblaze-core 0.3.8`, `genblaze-s3 0.3.6`,
+`genblaze-gmicloud 0.3.5`, `genblaze-elevenlabs 0.3.3` (all `<0.4`).
+
+- **Execution.** `Pipeline`, `RunBuilder`, `Run`, `Step`, `Manifest`, `Asset`,
+  `RunnableConfig`, the `Modality` / `RunStatus` / `StepStatus` /
+  `PromptVisibility` enums, and the `observability.events` stream that the
+  workspace renders live.
+- **The B2 seam.** `ObjectStorageSink` + `KeyStrategy.CONTENT_ADDRESSABLE` is
+  exactly where generation output becomes a content-addressed object. That single
+  line in the GMI and ElevenLabs gateways is what wires the SDK's storage
+  abstraction into the key scheme the whole build system depends on.
+- **Provider adapters.** `GMICloudImageProvider` and `GMICloudVideoProvider` from
+  `genblaze_gmicloud`; `ElevenLabsTTSProvider` from `genblaze_elevenlabs`.
+- **Typed failure.** `ProviderErrorCode`, `ProviderError`, `PipelineError` and
+  `StorageError` are what the recovery ladder keys off. Every retry, fallback and
+  terminal decision is made on an enum — never on the text of an error message.
+  That is the difference between self-healing and guessing.
+- **Canonicalisation, cross-checked.** The pure domain implements JCS (RFC 8785)
+  itself so it can keep its zero-I/O boundary, and a conformance test asserts its
+  output matches `genblaze_core.canonical.json` byte-for-byte. The domain stays
+  dependency-free *and* provably agrees with the SDK.
+
+One thing worth passing on: `genblaze_core` has zero top-level exports, so
+everything imports from its real module paths (`genblaze_core.models.enums`,
+`genblaze_core.storage.sink`, …). Introspecting the installed package on day one
+instead of guessing from docs saved a day of wrong assumptions.
