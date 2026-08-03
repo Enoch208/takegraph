@@ -119,6 +119,72 @@ def probe_media_path(
     return _parse_probe(payload)
 
 
+def extract_poster_frame(
+    data: bytes,
+    *,
+    temp_root: Path,
+    at_seconds: float = 0.8,
+    timeout_seconds: int = 30,
+) -> bytes:
+    """Decode a single frame of a clip as PNG bytes.
+
+    Used to give a video tile something to show. Seeking a little way in rather
+    than to frame zero is deliberate: several ORBIT clips open on a near-black
+    frame, and a black rectangle reads as a broken tile rather than a video.
+
+    Same shape as the other ffmpeg callers here — fixed argv, no shell, a bounded
+    timeout, and output size capped so a hostile file cannot flood the log.
+    """
+    if not data:
+        raise InvalidSourceError("Poster extraction requires clip bytes.")
+    if at_seconds < 0:
+        raise InvalidSourceError("Poster timestamp must not be negative.")
+    root = temp_root.resolve()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor, source_name = tempfile.mkstemp(dir=root, prefix="poster-source-", suffix=".video")
+    source = Path(source_name)
+    output = root / f"poster-{source.stem}.png"
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        command = [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-protocol_whitelist",
+            "file",
+            "-ss",
+            f"{at_seconds:.3f}",
+            "-i",
+            str(source),
+            "-frames:v",
+            "1",
+            str(output),
+        ]
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed argv and validated local paths
+                command,
+                check=False,
+                capture_output=True,
+                timeout=timeout_seconds,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise InvalidSourceError("Poster extraction did not complete safely.") from exc
+        if len(result.stdout) + len(result.stderr) > MAX_PROBE_OUTPUT_BYTES:
+            raise InvalidSourceError("Poster extraction output exceeded the safety limit.")
+        if result.returncode != 0 or not output.exists():
+            raise InvalidSourceError("Clip could not be decoded into a poster frame.")
+        return output.read_bytes()
+    finally:
+        source.unlink(missing_ok=True)
+        output.unlink(missing_ok=True)
+
+
 def normalize_narration_bytes(
     data: bytes,
     *,

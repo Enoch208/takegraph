@@ -73,3 +73,6 @@ Thumbs.db
 
 # Next.js build artefacts already covered above; keep generated types out.
 apps/web/next-env.d.ts
+
+# Derived poster cache — content-addressed, rebuildable from B2 at any time.
+.cache/

@@ -27,6 +27,7 @@ from takegraph_api.projection import DemoProof, load_demo_proof
 from takegraph_api.projects import router as projects_router
 from takegraph_api.release_routes import router as releases_router
 from takegraph_api.review import router as review_router
+from takegraph_api.thumbnails import router as thumbnails_router
 from takegraph_api.uploads import router as uploads_router
 
 API_PREFIX = "/api/v1"
@@ -44,6 +45,7 @@ app.include_router(changes_router)
 app.include_router(projects_router)
 app.include_router(releases_router)
 app.include_router(review_router)
+app.include_router(thumbnails_router)
 app.include_router(uploads_router)
 
 
@@ -76,6 +78,7 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
         ApiErrorCode.RATE_LIMITED: 429,
         ApiErrorCode.B2_SIGNATURE_INVALID: 401,
         ApiErrorCode.FEATURE_NOT_CONFIGURED: 503,
+        ApiErrorCode.STORAGE_UNAVAILABLE: 503,
     }.get(exc.error_code, 400 if exc.error_code != ApiErrorCode.INTERNAL_ERROR else 500)
 
     return JSONResponse(

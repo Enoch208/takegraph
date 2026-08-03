@@ -81,6 +81,20 @@ class ProviderQuotaError(DomainError):
     error_code = ApiErrorCode.PROVIDER_QUOTA
 
 
+class StorageUnavailableError(DomainError):
+    """Durable storage would not serve the bytes.
+
+    Distinct from AssetVerificationError, which means the bytes came back wrong.
+    This means they did not come back at all — the bucket refused the read, the
+    account's daily transaction or bandwidth cap was reached, or the endpoint was
+    unreachable. Nothing is wrong with the asset and nothing is wrong with the
+    request; retrying later may well succeed, which is why it maps to 503 rather
+    than a 4xx that would tell a caller to stop asking.
+    """
+
+    error_code = ApiErrorCode.STORAGE_UNAVAILABLE
+
+
 class AssetVerificationError(DomainError):
     """§8.3.6/§8.3.7: stored bytes did not match the recorded or declared hash."""
 

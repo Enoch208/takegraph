@@ -1,24 +1,34 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { fetchAssetAccess, type SelectedAsset } from "@/lib/api";
+import type { SelectedAsset } from "@/lib/api";
 import { Icon } from "@/components/icon";
 
 /**
- * Media is fetched only once the tile is near the viewport.
+ * A storyboard tile's picture.
  *
- * Eighteen nodes, each holding a full-resolution original — a 2048×2048 render
- * or an MP4 — displayed in a tile a couple of hundred pixels wide. Requesting all
- * of them at first paint took roughly fourteen seconds before the storyboard
- * stopped looking empty, which is the first thing anyone opening the demo sees.
+ * This used to point the browser at the full-resolution original in B2 — a 1.6 MB
+ * render, or an MP4 — to fill a box a couple of hundred pixels wide, for all
+ * eighteen nodes at once. It was slow (the storyboard sat empty for about fourteen
+ * seconds), it spent a B2 Class B transaction and the object's egress per tile on
+ * every page view, and when that daily cap was reached B2 answered 403 with an XML
+ * error document. A browser asked to render XML as an image draws a broken-image
+ * glyph, so the dashboard looked broken while behaving correctly.
  *
- * It is also not free. Every one of those is a B2 Class B transaction plus its
- * egress, on a bucket with a daily transaction cap, charged again on every page
- * view. Gating on visibility means a viewer pays for the tiles they actually look
- * at. `rootMargin` starts the fetch before the tile is on screen so scrolling
- * still feels instant.
+ * Now it asks the API for a cached, downscaled poster. Same-origin, so no
+ * presigned-URL expiry and no cross-origin blocking; content-addressed and
+ * immutable, so a reload comes from the browser cache; and the API only reaches
+ * B2 the first time any viewer asks for a given asset.
+ *
+ * Two further guards, because a demo runs unattended: nothing is requested until
+ * the tile approaches the viewport, and a poster that fails renders a stated
+ * fallback rather than a broken glyph.
  */
 const NEAR_VIEWPORT = "600px";
+
+function hasPoster(asset: SelectedAsset): boolean {
+  return asset.mime_type.startsWith("image/") || asset.mime_type.startsWith("video/");
+}
 
 export function MediaThumb({
   asset,
@@ -29,7 +39,7 @@ export function MediaThumb({
   token: string;
   className?: string;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
   const holder = useRef<HTMLDivElement | null>(null);
@@ -40,8 +50,7 @@ export function MediaThumb({
       return;
     }
     // Without IntersectionObserver — older browsers, and jsdom under test — load
-    // immediately. Degrading to "slower" is correct; degrading to "no media" is
-    // not.
+    // immediately. Degrading to "slower" is correct; degrading to "no media" is not.
     if (typeof IntersectionObserver === "undefined") {
       setVisible(true);
       return;
@@ -60,34 +69,68 @@ export function MediaThumb({
   }, [visible]);
 
   useEffect(() => {
-    let cancelled = false;
-    setUrl(null);
-    setError(null);
-    if (!asset || !visible) {
+    if (!asset || !visible || !hasPoster(asset)) {
       return;
     }
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setError(null);
+
     void (async () => {
-      const result = await fetchAssetAccess(asset.access_path, token);
-      if (cancelled) {
-        return;
+      try {
+        // Fetched rather than assigned to <img src> because the route is
+        // authorised and an image element cannot carry a bearer token. The
+        // response still comes from the browser's HTTP cache on reload — the URL
+        // and its immutable Cache-Control do that work.
+        const response = await fetch(`/api/v1/assets/${asset.id}/thumbnail`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) {
+          throw new Error(`poster returned ${response.status}`);
+        }
+        const blob = await response.blob();
+        if (cancelled) {
+          return;
+        }
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      } catch (cause) {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "poster unavailable");
+        }
       }
-      if (!result.ok) {
-        setError(result.error);
-        return;
-      }
-      setUrl(result.data.access_url);
     })();
+
     return () => {
       cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
   }, [asset, token, visible]);
 
   if (!asset) {
     return (
       <div
-        className={`flex items-center justify-center border border-dashed border-border bg-elevated text-faint ${className}`}
+        className={`flex items-center justify-center border border-dashed border-hairline bg-elevated text-faint ${className}`}
       >
         <Icon name="layers" className="size-5" />
+      </div>
+    );
+  }
+
+  // Audio and JSON have no picture. Naming what the node holds is more useful
+  // than an empty frame, and it costs no request at all.
+  if (!hasPoster(asset)) {
+    const audio = asset.mime_type.startsWith("audio/");
+    return (
+      <div
+        className={`flex flex-col items-center justify-center gap-1.5 bg-elevated text-faint ${className}`}
+      >
+        <Icon name={audio ? "play" : "verified"} className="size-5" />
+        <span className="font-mono text-[10px] uppercase tracking-wider">
+          {audio ? "Audio" : "Document"}
+        </span>
       </div>
     );
   }
@@ -95,65 +138,34 @@ export function MediaThumb({
   if (error) {
     return (
       <div
-        className={`flex items-center justify-center border border-dashed border-danger/40 bg-elevated px-2 text-center font-mono text-[10px] text-danger ${className}`}
+        className={`flex flex-col items-center justify-center gap-1.5 border border-dashed border-hairline bg-elevated px-2 text-center text-faint ${className}`}
+        title={error}
       >
-        media unavailable
+        <Icon name="failed" className="size-4" />
+        <span className="font-mono text-[10px] uppercase tracking-wider">No preview</span>
       </div>
     );
   }
 
-  if (!url) {
-    // The observer needs a mounted node to watch, so the placeholder carries the
-    // ref rather than the loaded media.
+  if (!src) {
+    // The observer needs a mounted node to watch, so the placeholder carries the ref.
     return (
       <div
         ref={holder}
         className={`skeleton bg-elevated ${className}`}
         role="img"
-        aria-label="Loading media"
-      />
-    );
-  }
-
-  if (asset.media_kind === "VIDEO" || asset.mime_type.startsWith("video/")) {
-    return (
-      <video
-        // The #t media fragment seeks to a frame just past the start, so the
-        // element paints a poster instead of a black rectangle. `preload
-        //="metadata"` alone loads dimensions and duration but never decodes a
-        // frame, which is why every clip tile rendered empty.
-        src={`${url}#t=0.1`}
-        className={`object-cover ${className}`}
-        muted
-        playsInline
-        preload="metadata"
-        onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)}
-        onMouseLeave={(event) => {
-          event.currentTarget.pause();
-          event.currentTarget.currentTime = 0.1;
-        }}
-      />
-    );
-  }
-
-  if (asset.media_kind === "IMAGE" || asset.mime_type.startsWith("image/")) {
-    return (
-      <img
-        src={url}
-        alt=""
-        // Decoding off the main thread keeps a 2048px original from stalling the
-        // storyboard's paint while several tiles arrive at once.
-        decoding="async"
-        className={`object-cover ${className}`}
+        aria-label="Loading preview"
       />
     );
   }
 
   return (
-    <div
-      className={`flex items-center justify-center border border-border bg-elevated font-mono text-[10px] text-muted ${className}`}
-    >
-      {asset.media_kind}
-    </div>
+    <img
+      src={src}
+      alt=""
+      decoding="async"
+      onError={() => setError("poster failed to decode")}
+      className={`object-cover ${className}`}
+    />
   );
 }

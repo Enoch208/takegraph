@@ -365,7 +365,13 @@ class AssetAccessService:
         self._store = store
         self._ttl_seconds = ttl_seconds
 
-    async def issue(self, *, asset_id: uuid.UUID, principal: Principal) -> AssetAccessResponse:
+    async def authorize(self, *, asset_id: uuid.UUID, principal: Principal) -> Asset:
+        """Resolve an asset the principal is allowed to see, or raise.
+
+        Shared with the thumbnail route. A thumbnail is a view of the asset, so it
+        must pass the same check — keeping one implementation is what stops the
+        two from drifting into a bypass.
+        """
         asset = await self._session.get(Asset, asset_id)
         if asset is None:
             raise NotFoundError("Asset was not found.")
@@ -375,6 +381,10 @@ class AssetAccessService:
             project_ids = await self._asset_project_ids(asset.id)
             if principal.project_scope_id not in project_ids:
                 raise ForbiddenError("Asset is not available to this principal.")
+        return asset
+
+    async def issue(self, *, asset_id: uuid.UUID, principal: Principal) -> AssetAccessResponse:
+        asset = await self.authorize(asset_id=asset_id, principal=principal)
         access_url = self._store.presign_get(asset.b2_key, ttl_seconds=self._ttl_seconds)
         return AssetAccessResponse(
             asset_id=asset.id,
