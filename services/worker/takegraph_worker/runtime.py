@@ -22,6 +22,7 @@ from takegraph_worker.local_image_work import LocalImageWorkHandlers
 from takegraph_worker.music_work import MusicWorkHandlers
 from takegraph_worker.narration_work import NarrationWorkHandlers
 from takegraph_worker.plan_work import PlanWorkHandlers
+from takegraph_worker.source_node_work import SOURCE_KEYS, SourceNodeHandlers
 from takegraph_worker.source_work import SourceWorkHandlers
 
 
@@ -69,6 +70,8 @@ class WorkerRuntime:
         )
         self._music_handlers = music_handlers or MusicWorkHandlers(session_factory, store)
         self._plan_handlers = plan_handlers or PlanWorkHandlers(session_factory, store)
+        # Source nodes resolve from the revision; no provider, no store.
+        self._source_handlers = SourceNodeHandlers(session_factory)
         self._local_image_handlers = local_image_handlers or LocalImageWorkHandlers(
             session_factory, store
         )
@@ -140,6 +143,9 @@ class WorkerRuntime:
             stable_key = await session.scalar(
                 select(BuildNode.stable_key).where(BuildNode.id == build_node_id)
             )
+        if stable_key in SOURCE_KEYS:
+            await self._source_handlers.execute_build_node(build_node_id)
+            return
         if stable_key == "copy.pack":
             await self._build_handlers.execute_build_node(build_node_id)
             return

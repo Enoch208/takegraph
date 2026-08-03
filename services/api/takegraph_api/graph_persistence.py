@@ -190,28 +190,49 @@ class OrbitGraphRepository:
     async def _ensure_provider_policy(
         self, key: str, definition: dict[str, JsonValue]
     ) -> uuid.UUID:
+        """Resolve this definition to an immutable policy version, creating one if
+        the definition is new.
+
+        §5.5 FR-PROV-001 requires a policy change to change node fingerprints,
+        and §8.1 requires each stored version to be immutable. Both hold only if a
+        changed definition becomes a *new version* rather than an edit: pinning
+        the lookup to version 1 satisfied immutability by making change
+        impossible, which is not the same thing.
+
+        An existing version whose hash matches is reused, so recompiling an
+        unchanged policy is idempotent and does not inflate the version number.
+        Older versions stay exactly as they were — builds that referenced them
+        keep resolving to the definition they actually ran against.
+        """
+        digest = canonical_hash(definition)
         rows = (
             await self._session.scalars(
-                select(ProviderPolicy).where(
+                select(ProviderPolicy)
+                .where(
                     ProviderPolicy.organization_id.is_(None),
                     ProviderPolicy.key == key,
-                    ProviderPolicy.version == 1,
                 )
+                .order_by(ProviderPolicy.version)
             )
         ).all()
-        if len(rows) > 1:
-            raise InvalidSourceError("Global provider policy scope contains duplicate versions.")
-        digest = canonical_hash(definition)
-        if rows:
-            row = rows[0]
-            if row.canonical_hash != digest or row.definition_json != definition:
-                raise InvalidSourceError("Stored provider policy version is not immutable.")
-            return row.id
+
+        for row in rows:
+            if row.canonical_hash == digest:
+                if row.definition_json != definition:
+                    # Same hash, different bytes: canonicalisation and storage
+                    # have diverged. Failing loudly beats silently trusting a
+                    # hash that no longer describes what is stored.
+                    raise InvalidSourceError(
+                        f"Provider policy {key} v{row.version} hashes to its stored digest "
+                        "but its definition differs; canonicalisation has drifted."
+                    )
+                return row.id
+
         row = ProviderPolicy(
             id=uuid.uuid4(),
             organization_id=None,
             key=key,
-            version=1,
+            version=max((r.version for r in rows), default=0) + 1,
             definition_json=definition,
             canonical_hash=digest,
         )
@@ -222,28 +243,38 @@ class OrbitGraphRepository:
     async def _ensure_validation_policy(
         self, key: str, definition: dict[str, JsonValue]
     ) -> uuid.UUID:
+        """Same versioning contract as provider policies.
+
+        §5.6 FR-QA-006 expects a validator-policy change to be able to force
+        fresh QA without regenerating media, which requires the change to be
+        expressible at all.
+        """
+        digest = canonical_hash(definition)
         rows = (
             await self._session.scalars(
-                select(ValidationPolicy).where(
+                select(ValidationPolicy)
+                .where(
                     ValidationPolicy.organization_id.is_(None),
                     ValidationPolicy.key == key,
-                    ValidationPolicy.version == 1,
                 )
+                .order_by(ValidationPolicy.version)
             )
         ).all()
-        if len(rows) > 1:
-            raise InvalidSourceError("Global validation policy scope contains duplicate versions.")
-        digest = canonical_hash(definition)
-        if rows:
-            row = rows[0]
-            if row.canonical_hash != digest or row.definition_json != definition:
-                raise InvalidSourceError("Stored validation policy version is not immutable.")
-            return row.id
+
+        for row in rows:
+            if row.canonical_hash == digest:
+                if row.definition_json != definition:
+                    raise InvalidSourceError(
+                        f"Validation policy {key} v{row.version} hashes to its stored digest "
+                        "but its definition differs; canonicalisation has drifted."
+                    )
+                return row.id
+
         row = ValidationPolicy(
             id=uuid.uuid4(),
             organization_id=None,
             key=key,
-            version=1,
+            version=max((r.version for r in rows), default=0) + 1,
             definition_json=definition,
             canonical_hash=digest,
         )
