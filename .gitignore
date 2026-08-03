@@ -76,3 +76,6 @@ apps/web/next-env.d.ts
 
 # Derived poster cache — content-addressed, rebuildable from B2 at any time.
 .cache/
+
+# Demo video pipeline: renders, captured frames, and video/.env.local (API key).
+video/

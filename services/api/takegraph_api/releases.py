@@ -74,6 +74,10 @@ class VerificationResponse(BaseModel):
     checked_assets: int
     manifest_sha256: str
     retention_mode: str
+    verified_at: datetime
+    """When this check ran. A verification is a statement about a moment — the
+    bytes were re-read and re-hashed then — so the answer is worth little without
+    it, and the proof page renders it as evidence."""
 
 
 class ReleaseService:
@@ -375,7 +379,13 @@ class ReleaseService:
                 .where(ReleaseAsset.release_id == release.id)
             )
         ).all()
-        for release_asset, asset in rows:
+        # Concurrently, not one after another. Each check is a full download and
+        # re-hash from object storage, so the sequential loop spent the sum of
+        # every asset's round trip — 78 seconds for eight assets on a slow link,
+        # which is long enough that a proxy in front of this gives up and the
+        # caller is told the verification failed when it had not even finished.
+        # The checks are independent; only the verdict is combined.
+        async def _check(release_asset: ReleaseAsset, asset: Asset) -> str | None:
             key = release_key(
                 organization_id=project.organization_id,
                 project_id=project.id,
@@ -383,13 +393,24 @@ class ReleaseService:
                 logical_path=f"assets/{release_asset.logical_path}",
                 prefix=self._release_store.prefix,
             )
-            if not await asyncio.to_thread(
+            ok = await asyncio.to_thread(
                 self._release_store.verify, key, expected_sha256=asset.sha256
-            ):
-                raise AssetVerificationError(
-                    f"Release asset {release_asset.logical_path} failed verification."
-                )
+            )
+            return None if ok else release_asset.logical_path
+
+        failures = [
+            path
+            for path in await asyncio.gather(*(_check(ra, a) for ra, a in rows))
+            if path is not None
+        ]
+        if failures:
+            # Name every asset that failed, not just the first. A partial answer
+            # sends someone hunting one file when several may have drifted.
+            raise AssetVerificationError(
+                f"Release assets failed verification: {', '.join(sorted(failures))}."
+            )
         return VerificationResponse(
+            verified_at=datetime.now(UTC),
             release_id=release.id,
             verified=True,
             checked_assets=len(rows),

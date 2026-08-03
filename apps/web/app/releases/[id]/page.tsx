@@ -17,6 +17,16 @@ import {
 } from "@/lib/api";
 import { readDemoSession, writeDemoSession } from "@/lib/demo-session";
 
+/** A timestamp the API may not send must never crash the proof page.
+ *  new Date(undefined).toISOString() throws RangeError, which took the whole
+ *  release view down mid-verification. */
+function iso(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "—" : d.toISOString();
+}
+
+
 export default function ReleaseProofPage() {
   const params = useParams<{ id: string }>();
   const releaseId = params.id;
@@ -174,7 +184,7 @@ export default function ReleaseProofPage() {
                     </dt>
                     <dd className="text-muted">
                       {release.approved_at
-                        ? `${new Date(release.approved_at).toISOString()} · ${
+                        ? `${iso(release.approved_at)} · ${
                             release.approved_by ? shortId(release.approved_by) : "—"
                           }`
                         : "—"}
@@ -186,7 +196,7 @@ export default function ReleaseProofPage() {
                     </dt>
                     <dd className="text-muted">
                       {release.published_at
-                        ? new Date(release.published_at).toISOString()
+                        ? iso(release.published_at)
                         : "—"}
                     </dd>
                   </div>
@@ -220,7 +230,7 @@ export default function ReleaseProofPage() {
                       : "Verification failed"}
                   </p>
                   <p className="mt-2 font-mono text-[10px] text-muted">
-                    {new Date(verification.verified_at).toISOString()}
+                    {iso(verification.verified_at)}
                   </p>
                   <p className="mt-1 break-all font-mono text-[11px] text-muted">
                     {verification.manifest_sha256}
