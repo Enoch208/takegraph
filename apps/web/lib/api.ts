@@ -110,6 +110,10 @@ export type Validation = {
   confidence: string | null;
   evidence: Record<string, unknown> | null;
   created_at: string;
+  /** True when the gate ran in the build that produced the bytes, not this one.
+   *  §12.3 makes current, accepted gates a precondition of reuse, so this is the
+   *  evidence justifying a REUSED decision — but it must be labelled as such. */
+  inherited: boolean;
 };
 
 export type BuildNode = {

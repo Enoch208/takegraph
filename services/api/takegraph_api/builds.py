@@ -120,6 +120,11 @@ class ValidationView(BaseModel):
     confidence: str | None
     evidence: dict | None
     created_at: str
+    inherited: bool = False
+    """True when this gate ran in the build that generated the bytes, not in this
+    one. §12.3 makes "required validation gates are current and accepted" a
+    precondition of reuse, so this evidence is what justifies the REUSED
+    decision — but the UI has to say it was inherited rather than re-run."""
 
 
 class BuildNodeView(BaseModel):
@@ -223,6 +228,37 @@ def _asset_views(rows: list[tuple[AttemptAsset, Asset]]) -> list[AssetView]:
         )
         for link, asset in rows
     ]
+
+
+def _validation_view(validation: Validation, *, inherited: bool = False) -> ValidationView:
+    return ValidationView(
+        id=validation.id,
+        attempt_id=validation.attempt_id,
+        asset_id=validation.asset_id,
+        policy_id=validation.policy_id,
+        gate_key=validation.gate_key,
+        gate_version=validation.gate_version,
+        status=validation.status,
+        score=_decimal(validation.score),
+        confidence=_decimal(validation.confidence),
+        evidence=validation.evidence_json,
+        created_at=_iso(validation.created_at) or "",
+        inherited=inherited,
+    )
+
+
+def _reused_validation_views(
+    node: BuildNode, validations: dict[uuid.UUID, Validation]
+) -> list[ValidationView]:
+    views: list[ValidationView] = []
+    for raw in (node.reuse_proof_json or {}).get("validation_ids", []):
+        try:
+            found = validations.get(uuid.UUID(str(raw)))
+        except ValueError:
+            continue
+        if found is not None:
+            views.append(_validation_view(found, inherited=True))
+    return views
 
 
 def _reused_asset_views(node: BuildNode, assets: dict[uuid.UUID, Asset]) -> list[AssetView]:
@@ -502,6 +538,33 @@ async def get_build_graph(
                 )
             }
 
+        # Same reasoning for quality evidence: a reused node's gates ran in the
+        # build that produced the bytes. Without this the Quality tab is empty on
+        # thirteen of eighteen nodes, and the reuse decision looks unjustified
+        # when in fact the proof is exactly what justified it.
+        reused_validation_ids: set[uuid.UUID] = set()
+        for node, _ in node_rows:
+            for raw in (node.reuse_proof_json or {}).get("validation_ids", []):
+                try:
+                    reused_validation_ids.add(uuid.UUID(str(raw)))
+                except ValueError:
+                    continue
+
+        inherited_validations: dict[uuid.UUID, Validation] = {}
+        if reused_validation_ids:
+            inherited_validations = {
+                v.id: v
+                for v in (
+                    (
+                        await session.execute(
+                            select(Validation).where(Validation.id.in_(reused_validation_ids))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            }
+
         attempts_by_node: dict[uuid.UUID, list[AttemptView]] = {}
         attempt_views: dict[uuid.UUID, AttemptView] = {}
         for attempt in attempts:
@@ -571,22 +634,11 @@ async def get_build_graph(
                         if selected
                         else _reused_asset_views(node, reused_assets)
                     ),
-                    validations=[
-                        ValidationView(
-                            id=v.id,
-                            attempt_id=v.attempt_id,
-                            asset_id=v.asset_id,
-                            policy_id=v.policy_id,
-                            gate_key=v.gate_key,
-                            gate_version=v.gate_version,
-                            status=v.status,
-                            score=_decimal(v.score),
-                            confidence=_decimal(v.confidence),
-                            evidence=v.evidence_json,
-                            created_at=_iso(v.created_at) or "",
-                        )
-                        for v in validations_by_node.get(node.id, [])
-                    ],
+                    validations=(
+                        [_validation_view(v) for v in validations_by_node[node.id]]
+                        if validations_by_node.get(node.id)
+                        else _reused_validation_views(node, inherited_validations)
+                    ),
                 )
             )
 

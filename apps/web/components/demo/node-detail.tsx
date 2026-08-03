@@ -126,16 +126,31 @@ export function NodeDetail({
         {node.validations.length > 0 ? (
           <section>
             <p className="mb-2 font-mono text-[10px] uppercase tracking-wider text-faint">
-              Validations
+              Quality gates
             </p>
             <ul className="space-y-2">
               {node.validations.map((validation) => (
                 <li
                   key={validation.id}
-                  className="flex items-center justify-between border border-border px-3 py-2"
+                  className="flex items-center justify-between gap-3 border border-border px-3 py-2"
                 >
-                  <span className="font-mono text-[11px] text-muted">{validation.gate_key}</span>
-                  <StatusPill status={validation.status} />
+                  <span className="min-w-0 font-mono text-[11px] text-muted">
+                    {validation.gate_key}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {validation.inherited ? (
+                      /* Labelled, not hidden. The gate is genuine evidence but it
+                         ran on the build that produced the bytes, and presenting
+                         it as if it re-ran here would overstate what happened. */
+                      <span
+                        className="font-mono text-[9px] uppercase tracking-widest text-faint"
+                        title="Ran in the build that produced these bytes; carried forward by the reuse proof"
+                      >
+                        inherited
+                      </span>
+                    ) : null}
+                    <StatusPill status={validation.status} />
+                  </span>
                 </li>
               ))}
             </ul>
