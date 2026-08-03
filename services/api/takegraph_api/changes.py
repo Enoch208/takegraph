@@ -628,17 +628,53 @@ class ChangeImpactService:
         graph_revision: GraphRevision,
         baseline_build_id: uuid.UUID | None = None,
     ) -> tuple[dict[str, NodeCacheState], uuid.UUID]:
-        statement = select(Build).where(
-            Build.project_id == project.id,
-            Build.project_revision_id == revision.id,
-            Build.graph_revision_id == graph_revision.id,
-            Build.status == str(BuildStatus.SUCCEEDED),
-        )
+        succeeded = str(BuildStatus.SUCCEEDED)
         if baseline_build_id is not None:
-            statement = statement.where(Build.id == baseline_build_id)
-        build = await self._session.scalar(
-            statement.order_by(Build.created_at.desc(), Build.id.desc()).limit(1)
-        )
+            # Commit-time revalidation: the plan named its baseline, and only that
+            # build may be used, or the decisions being committed would rest on
+            # different evidence than the ones previewed.
+            build = await self._session.scalar(
+                select(Build).where(
+                    Build.project_id == project.id,
+                    Build.id == baseline_build_id,
+                    Build.status == succeeded,
+                )
+            )
+        else:
+            build = await self._session.scalar(
+                select(Build)
+                .where(
+                    Build.project_id == project.id,
+                    Build.project_revision_id == revision.id,
+                    Build.graph_revision_id == graph_revision.id,
+                    Build.status == succeeded,
+                )
+                .order_by(Build.created_at.desc(), Build.id.desc())
+                .limit(1)
+            )
+            if build is None:
+                # The head revision has no successful build of its own — the usual
+                # cause is that its build failed. Committing a revision is not
+                # undone by a failed build: the spec really did change, so the head
+                # legitimately points here and cannot be rewound.
+                #
+                # Falling back to this project's most recent successful build is
+                # both correct and the only way out of that state. What a baseline
+                # supplies is the set of artifacts that already exist and their
+                # fingerprints; which revision produced them does not change
+                # whether they can be reused, because §12.3 decides reuse on
+                # fingerprint identity, not on revision lineage. A node whose
+                # recipe or inputs differ simply fails to match and rebuilds.
+                #
+                # Without this a single failed build strands the project forever:
+                # preview refuses the head revision, and a preview against the
+                # older revision is refused as stale.
+                build = await self._session.scalar(
+                    select(Build)
+                    .where(Build.project_id == project.id, Build.status == succeeded)
+                    .order_by(Build.created_at.desc(), Build.id.desc())
+                    .limit(1)
+                )
         if build is None:
             raise BuildNotRunnableError(
                 "Impact preview requires a completed baseline build for the base revision."

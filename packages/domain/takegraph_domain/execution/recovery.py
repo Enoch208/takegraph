@@ -138,10 +138,9 @@ def decide_recovery(
 
     # 1. Same model, same provider — cheapest recovery, and the right response to
     #    a genuinely transient fault.
-    if (
-        error_class in (ErrorClass.TRANSIENT, ErrorClass.STORAGE)
-        and budget.transient_retries_used < max_transient
-    ):
+    # The eligible set lives on ErrorClass so the rule is stated once. Inlining it
+    # here is how the implementation drifted from the documented one.
+    if error_class.is_retryable_same_provider and budget.transient_retries_used < max_transient:
         return RecoveryDecision(
             action=RecoveryAction.RETRY_SAME_MODEL,
             reason_code="TRANSIENT_RETRY",

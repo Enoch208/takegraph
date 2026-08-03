@@ -249,3 +249,64 @@ class TestBackoff:
         Keeping it out here is what makes these tests meaningful."""
         config = {"base_delay_seconds": 2, "max_delay_seconds": 30}
         assert backoff_delay(3, config) == backoff_delay(3, config)
+
+
+def test_internal_provider_failure_takes_the_cheap_retry_rung() -> None:
+    """An unclassified provider failure must not fail the node outright.
+
+    classify_provider_error maps ProviderErrorCode.UNKNOWN to INTERNAL, and the
+    ORBIT image policy configures no fallback model. Excluding INTERNAL from the
+    same-model rung meant one unexplained GMI failure ended an 18-node build on
+    its first attempt.
+    """
+    decision = decide_recovery(
+        error_class=ErrorClass.INTERNAL,
+        policy={
+            "primary": {"provider": "gmicloud", "timeout_seconds": 240},
+            "retry": {"max_transient_retries": 2, "base_delay_seconds": 2},
+            "budgets": {"max_total_attempts": 4},
+        },
+        budget=AttemptBudget(
+            attempt_count=1,
+            transient_retries_used=0,
+            elapsed_seconds=10.0,
+            estimated_spend_usd=Decimal("0"),
+        ),
+        current_model="seedream-5.0-pro",
+    )
+    assert decision.action is RecoveryAction.RETRY_SAME_MODEL
+    assert decision.mechanism is AttemptMechanism.SAME_PROVIDER_RETRY
+    assert decision.model == "seedream-5.0-pro"
+
+
+def test_internal_retry_is_still_bounded_by_the_transient_budget() -> None:
+    """The cheap rung is bounded; it must not spin on a genuinely broken model."""
+    decision = decide_recovery(
+        error_class=ErrorClass.INTERNAL,
+        policy={
+            "primary": {"provider": "gmicloud"},
+            "retry": {"max_transient_retries": 2},
+            "budgets": {"max_total_attempts": 8},
+        },
+        budget=AttemptBudget(
+            attempt_count=3,
+            transient_retries_used=2,
+            elapsed_seconds=60.0,
+            estimated_spend_usd=Decimal("0"),
+        ),
+        current_model="seedream-5.0-pro",
+    )
+    assert decision.action is RecoveryAction.FAIL
+
+
+def test_model_and_quota_stay_off_the_same_model_rung() -> None:
+    """A model fault moves models; quota is not cleared by trying again."""
+    assert not ErrorClass.MODEL.is_retryable_same_provider
+    assert not ErrorClass.QUOTA.is_retryable_same_provider
+    assert not ErrorClass.INPUT.is_retryable_same_provider
+    assert not ErrorClass.AUTH.is_retryable_same_provider
+    assert not ErrorClass.POLICY.is_retryable_same_provider
+    assert not ErrorClass.VALIDATION.is_retryable_same_provider
+    assert ErrorClass.TRANSIENT.is_retryable_same_provider
+    assert ErrorClass.STORAGE.is_retryable_same_provider
+    assert ErrorClass.INTERNAL.is_retryable_same_provider

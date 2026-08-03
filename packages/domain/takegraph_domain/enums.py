@@ -200,8 +200,21 @@ class ErrorClass(StrEnum):
     @property
     def is_retryable_same_provider(self) -> bool:
         """§13.3: never retry invalid input, auth failure, policy denial, or a
-        deterministic validation failure as the same attempt."""
-        return self in (ErrorClass.TRANSIENT, ErrorClass.STORAGE)
+        deterministic validation failure as the same attempt.
+
+        INTERNAL belongs here. It is where an unclassified provider failure lands
+        — `classify_provider_error` maps ProviderErrorCode.UNKNOWN to it — and an
+        unclassified failure is by definition not one we have shown to be
+        deterministic, so §13.3 does not forbid retrying it. Excluding it meant a
+        single unexplained provider hiccup skipped the cheap rung entirely, and
+        on a policy with no fallback model configured that failed the node on its
+        first attempt and took the whole build down with it.
+
+        MODEL and QUOTA stay out. A model-specific fault should move to a
+        different model rather than re-run the one that just failed, and quota is
+        not cleared by trying again on the same account.
+        """
+        return self in (ErrorClass.TRANSIENT, ErrorClass.STORAGE, ErrorClass.INTERNAL)
 
 
 class TriggerSource(StrEnum):

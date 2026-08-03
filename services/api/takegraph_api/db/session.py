@@ -49,7 +49,14 @@ def get_engine() -> AsyncEngine:
             # connection is replaced before it can go stale.
             pool_recycle=300,
             # §20.2: every boundary has a timeout. No statement runs unbounded.
-            connect_args={"command_timeout": 15},
+            #
+            # 60s, not 15s. The queries here are indexed and finish in
+            # milliseconds; what blows the budget is the server stalling, and a
+            # Postgres checkpoint on Docker Desktop's filesystem has been observed
+            # taking over 90 seconds to fsync. At 15s that surfaced as work items
+            # failing and a worker dying on a pre-ping, neither of which describes
+            # anything actually wrong with the query.
+            connect_args={"command_timeout": 60},
         )
     return _engine
 
