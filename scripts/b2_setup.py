@@ -63,7 +63,11 @@ RELEASE_CAPABILITIES = [
     "readBucketRetentions",
 ]
 
-ALLOWED_ORIGINS = os.environ.get("B2_CORS_ORIGINS", "http://localhost:3000").split(",")
+# 127.0.0.1 and localhost are distinct origins to a browser, and dev tooling
+# uses both. Omitting either produces CORS failures that look like storage bugs.
+ALLOWED_ORIGINS = os.environ.get(
+    "B2_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+).split(",")
 
 
 class SetupError(RuntimeError):

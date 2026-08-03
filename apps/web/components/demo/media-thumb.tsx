@@ -72,11 +72,20 @@ export function MediaThumb({
   if (asset.media_kind === "VIDEO" || asset.mime_type.startsWith("video/")) {
     return (
       <video
-        src={url}
+        // The #t media fragment seeks to a frame just past the start, so the
+        // element paints a poster instead of a black rectangle. `preload
+        //="metadata"` alone loads dimensions and duration but never decodes a
+        // frame, which is why every clip tile rendered empty.
+        src={`${url}#t=0.1`}
         className={`object-cover ${className}`}
         muted
         playsInline
         preload="metadata"
+        onMouseEnter={(event) => void event.currentTarget.play().catch(() => undefined)}
+        onMouseLeave={(event) => {
+          event.currentTarget.pause();
+          event.currentTarget.currentTime = 0.1;
+        }}
       />
     );
   }
