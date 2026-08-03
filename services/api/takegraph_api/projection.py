@@ -15,6 +15,8 @@ real baseline build exists, this module is replaced by a query over persisted
 from __future__ import annotations
 
 import hashlib
+import uuid
+from collections.abc import Callable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -30,11 +32,19 @@ from takegraph_domain.graph.orbit import (
     ORBIT_TEMPLATE,
     PARAM_BRIEF_TEXT,
     PARAM_LEGAL_LINE,
+    POSTER_KEY,
     REFERENCED_POLICIES,
 )
 from takegraph_domain.graph.types import CompiledGraph, NodeCacheState
 
-from takegraph_api.db.models import Build, DomainEvent, Project
+from takegraph_api.db.models import (
+    Asset,
+    AttemptAsset,
+    Build,
+    BuildNode,
+    DomainEvent,
+    Project,
+)
 
 GENERATOR_CODE_VERSION = "seed-projection-1"
 
@@ -90,6 +100,11 @@ class DemoProof(BaseModel):
     rebuild_nodes: list[NodeDecision]
     plan_hash: str
     graph_hash: str
+
+    poster_url: str | None = None
+    """Short-lived signed URL for a real poster frame from the verified build.
+    None when no build has produced one — the page shows no preview rather than
+    a placeholder standing in for real output (§0.1)."""
 
 
 def _graph(legal_line: str) -> CompiledGraph:
@@ -182,8 +197,41 @@ def build_demo_proof() -> DemoProof:
     )
 
 
-async def load_demo_proof(session: AsyncSession) -> DemoProof:
-    """Prefer the latest proof event bound to a successful real demo build."""
+async def _poster_preview_url(
+    session: AsyncSession, build_id: uuid.UUID, sign: Callable[[str], str]
+) -> str | None:
+    """Short-lived signed URL for the build's selected poster asset.
+
+    §18.5 asks the landing page for a real ORBIT media preview. Returning None
+    rather than a placeholder is deliberate: a page that shows stock art where it
+    promises real output is the "unlabeled demo data on a live-looking path" that
+    §0.1 forbids. No poster, no preview.
+    """
+    row = await session.execute(
+        select(Asset.b2_key)
+        .join(AttemptAsset, AttemptAsset.asset_id == Asset.id)
+        .join(BuildNode, BuildNode.selected_attempt_id == AttemptAsset.attempt_id)
+        .where(
+            BuildNode.build_id == build_id,
+            BuildNode.stable_key == POSTER_KEY,
+            AttemptAsset.selected.is_(True),
+            Asset.media_kind == "IMAGE",
+            Asset.verified_at.is_not(None),
+        )
+        .limit(1)
+    )
+    key = row.scalar_one_or_none()
+    return None if key is None else sign(key)
+
+
+async def load_demo_proof(
+    session: AsyncSession, *, sign: Callable[[str], str] | None = None
+) -> DemoProof:
+    """Prefer the latest proof event bound to a successful real demo build.
+
+    `sign` is injected rather than constructed here so this module keeps no
+    storage dependency and stays usable in tests without credentials.
+    """
     event = await session.scalar(
         select(DomainEvent)
         .join(Build, Build.id == DomainEvent.build_id)
@@ -199,7 +247,10 @@ async def load_demo_proof(session: AsyncSession) -> DemoProof:
     )
     if event is None:
         return build_demo_proof()
+
     payload = dict(event.payload_json)
     payload["source"] = "BUILD_EVENTS"
     payload["verified_build"] = True
+    if sign is not None and event.build_id is not None:
+        payload["poster_url"] = await _poster_preview_url(session, event.build_id, sign)
     return DemoProof.model_validate(payload)

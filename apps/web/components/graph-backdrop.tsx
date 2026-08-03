@@ -1,13 +1,13 @@
 /**
- * The hero backdrop: the ORBIT dependency graph itself, not decorative light.
+ * Hero backdrop: the ORBIT dependency graph itself, not decorative light.
  *
- * Deliberately SVG and CSS rather than WebGL. A canvas shader would need a
- * static fallback for machines without WebGL; this has nothing to fall back
- * from, ships no third-party runtime, adds no CDN request, and honours
+ * SVG and CSS rather than WebGL. A shader would need a static fallback for
+ * machines without WebGL; this has nothing to fall back from, ships no
+ * third-party runtime, adds no network request, and honours
  * `prefers-reduced-motion` through the same rule as everything else.
  *
- * The colours carry the product's meaning (§18.3): orange travels only the edges
- * a legal-copy change invalidates, everything else settles green as reused. Node
+ * Colours carry the product's meaning (§18.3): orange travels only the edges a
+ * legal-copy change invalidates; everything else sits green as reused. Node
  * positions mirror the real §4.2 topology — sources left, keyframes and clips
  * through the middle, delivery at the right.
  */
@@ -79,16 +79,22 @@ export function GraphBackdrop() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 overflow-hidden"
-      // Fades the graph out at the edges so it never competes with the headline.
+      className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.28]"
+      // Fades the graph out towards the centre and edges so it frames the
+      // headline rather than competing with it.
       style={{
-        maskImage: "radial-gradient(120% 90% at 50% 42%, black 25%, transparent 78%)",
-        WebkitMaskImage: "radial-gradient(120% 90% at 50% 42%, black 25%, transparent 78%)",
+        maskImage: "radial-gradient(115% 80% at 50% 45%, transparent 8%, black 38%, transparent 82%)",
+        WebkitMaskImage:
+          "radial-gradient(115% 80% at 50% 45%, transparent 8%, black 38%, transparent 82%)",
       }}
     >
       <svg
         viewBox="0 0 720 580"
-        className="absolute left-1/2 top-1/2 h-[132%] w-[132%] -translate-x-1/2 -translate-y-1/2"
+        // Sized to the container. An earlier revision used h/w-[132%], which
+        // with preserveAspectRatio="meet" pushed the uniform scale to ~2.6x and
+        // rendered 3px nodes as 48px blobs.
+        className="absolute inset-0 h-full w-full"
+        preserveAspectRatio="xMidYMid slice"
         fill="none"
       >
         {EDGES.map((edge, i) => {
@@ -98,8 +104,12 @@ export function GraphBackdrop() {
               <path
                 d={path(edge)}
                 stroke={invalid ? "var(--color-signal)" : "var(--color-border)"}
-                strokeWidth={invalid ? 1.1 : 0.8}
-                opacity={invalid ? 0.5 : 0.55}
+                strokeWidth={invalid ? 1.1 : 0.7}
+                // vector-effect keeps hairlines hairline-thin however the SVG
+                // is scaled, which is the whole reason the previous version
+                // looked heavy.
+                vectorEffect="non-scaling-stroke"
+                opacity={invalid ? 0.75 : 0.5}
               />
               {invalid && (
                 // The travelling dash is what makes causality visible. It runs
@@ -107,8 +117,9 @@ export function GraphBackdrop() {
                 <path
                   d={path(edge)}
                   stroke="var(--color-signal)"
-                  strokeWidth={1.6}
-                  strokeDasharray="4 130"
+                  strokeWidth={1.4}
+                  vectorEffect="non-scaling-stroke"
+                  strokeDasharray="3 120"
                   opacity={0.9}
                   style={{ animation: `flow ${5 + (i % 3)}s linear infinite` }}
                 />
@@ -126,18 +137,18 @@ export function GraphBackdrop() {
                 <circle
                   cx={node.x}
                   cy={node.y}
-                  r={9}
+                  r={5}
                   fill={color}
-                  opacity={0.12}
+                  opacity={0.16}
                   style={{ animation: `breathe ${3 + (i % 3) * 0.4}s ease-in-out infinite` }}
                 />
               )}
               <circle
                 cx={node.x}
                 cy={node.y}
-                r={rebuild ? 3.4 : 2.6}
+                r={rebuild ? 2.2 : 1.7}
                 fill={color}
-                opacity={rebuild ? 0.95 : 0.55}
+                opacity={rebuild ? 0.95 : 0.6}
               />
             </g>
           );

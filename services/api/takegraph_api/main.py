@@ -15,7 +15,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from takegraph_domain.enums import ApiErrorCode, CapabilityState
-from takegraph_domain.errors import DomainError
+from takegraph_domain.errors import DomainError, FeatureNotConfiguredError
+from takegraph_infrastructure.b2 import B2Settings, B2Store
 
 from takegraph_api.b2_webhooks import router as b2_webhook_router
 from takegraph_api.changes import router as changes_router
@@ -138,5 +139,30 @@ async def demo_proof() -> DemoProof:
     whether these came from a projection over the seed template or from a real
     build's persisted events.
     """
-    async with session_scope() as session:
-        return await load_demo_proof(session)
+    # Storage is optional here. If B2 is unconfigured the proof still returns —
+    # it simply carries no poster, which is honest rather than fatal (§20.6:
+    # one unavailable dependency must not take down the whole surface).
+    store: B2Store | None = None
+    try:
+        store = B2Store(B2Settings.from_env(dict(os.environ)))
+    except FeatureNotConfiguredError:
+        store = None
+
+    sign: Callable[[str], str] | None = None
+    if store is not None:
+        # Bound to a local so the closure cannot capture a None `store`, and so
+        # the type checker can prove it.
+        bound = store
+        ttl = int(os.environ.get("B2_SIGNED_URL_TTL_SECONDS", "900"))
+
+        def sign_key(key: str) -> str:
+            return bound.presign_get(key, ttl_seconds=ttl)
+
+        sign = sign_key
+
+    try:
+        async with session_scope() as session:
+            return await load_demo_proof(session, sign=sign)
+    finally:
+        if store is not None:
+            store.close()
