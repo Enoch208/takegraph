@@ -49,7 +49,14 @@ from takegraph_domain.execution.idempotency import (
     submission_idempotency_key,
     work_item_dedupe_key,
 )
-from takegraph_domain.graph.orbit import DEFAULT_BRIEF_TEXT, PARAM_BRIEF_TEXT, PARAM_LEGAL_LINE
+from takegraph_domain.graph.fingerprint import GENERATOR_CODE_VERSION, compute_fingerprint
+from takegraph_domain.graph.orbit import (
+    DEFAULT_BRIEF_TEXT,
+    ORBIT_TEMPLATE,
+    PARAM_BRIEF_TEXT,
+    PARAM_LEGAL_LINE,
+)
+from takegraph_domain.graph.types import CompiledNode
 from takegraph_domain.storage.keys import content_address
 from takegraph_infrastructure.b2 import B2Store, StoredObject
 
@@ -750,6 +757,23 @@ async def schedule_ready_nodes(
         ).all()
         if not all(BuildNodeStatus(value).satisfies_dependency for value in predecessor_statuses):
             continue
+        predecessor_rows = (
+            await session.execute(
+                select(BuildNode.stable_key, BuildNode.selected_asset_set_hash)
+                .join(GraphEdge, GraphEdge.from_node_id == BuildNode.graph_node_id)
+                .where(
+                    BuildNode.build_id == build.id,
+                    GraphEdge.to_node_id == graph_node.id,
+                )
+            )
+        ).all()
+        compiled_node = CompiledNode.model_validate(graph_node.spec_json)
+        node.fingerprint = compute_fingerprint(
+            compiled_node,
+            input_refs={key: selected_hash for key, selected_hash in predecessor_rows},
+            generator_code_version=GENERATOR_CODE_VERSION,
+            template_version=ORBIT_TEMPLATE.version_label,
+        )
         assert_transition(BuildNodeStatus.PENDING, BuildNodeStatus.QUEUED, subject="node")
         previous = node.status
         node.status = str(BuildNodeStatus.QUEUED)

@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from takegraph_domain.auth import Permission, Principal, authorize_project
+from takegraph_domain.builds.asset_set import SelectedAsset, selected_asset_set_hash
 from takegraph_domain.canonical import JsonValue, canonical_hash, canonical_payload
 from takegraph_domain.enums import BuildNodeStatus, BuildStatus, ImpactDecision, Role
 from takegraph_domain.errors import (
@@ -34,6 +35,7 @@ from takegraph_domain.errors import (
 )
 from takegraph_domain.execution.idempotency import work_item_dedupe_key
 from takegraph_domain.graph.compiler import compile_graph
+from takegraph_domain.graph.fingerprint import GENERATOR_CODE_VERSION
 from takegraph_domain.graph.impact import ImpactPlan, NodeImpact, compute_impact
 from takegraph_domain.graph.orbit import (
     DEFAULT_BRIEF_TEXT,
@@ -65,7 +67,6 @@ from takegraph_api.db.session import session_scope
 from takegraph_api.graph_persistence import OrbitGraphRepository
 from takegraph_api.queue import WorkQueue
 
-GENERATOR_CODE_VERSION = "takegraph-generator-v1"
 CHANGE_SET_TTL = timedelta(hours=24)
 IMPACT_PLAN_TTL = timedelta(minutes=30)
 
@@ -470,6 +471,7 @@ class ChangeImpactService:
         reuse_sources = {
             key: {
                 "build_node_id": state.source_build_node_id,
+                "selected_attempt_id": state.selected_attempt_id,
                 "selected_output_hash": state.selected_output_hash,
                 "asset_ids": list(state.asset_ids),
                 "validation_ids": list(state.validation_ids),
@@ -482,15 +484,27 @@ class ChangeImpactService:
             impact = decisions[stable_key]
             graph_node = graph_nodes_by_key[stable_key]
             build_node_id = uuid.uuid4()
+            selected_attempt_id: uuid.UUID | None = None
             if impact.decision is ImpactDecision.REUSE:
                 source = reuse_sources.get(stable_key, {})
                 node_status = BuildNodeStatus.REUSED
                 resolution = "REUSED_FROM_BUILD"
                 selected_hash = source.get("selected_output_hash")
+                attempt_ref = source.get("selected_attempt_id")
+                selected_attempt_id = (
+                    uuid.UUID(str(attempt_ref)) if isinstance(attempt_ref, str) else None
+                )
                 proof = {
                     "source_build_node_id": source.get("build_node_id"),
+                    "selected_attempt_id": attempt_ref,
                     "asset_ids": source.get("asset_ids", []),
                     "validation_ids": source.get("validation_ids", []),
+                    "validations_current": True,
+                    "validation_policy_id": (
+                        None
+                        if graph_node.validation_policy_id is None
+                        else str(graph_node.validation_policy_id)
+                    ),
                     "reason_code": str(impact.reason_code),
                 }
             else:
@@ -512,6 +526,7 @@ class ChangeImpactService:
                 resolution=resolution,
                 reason_code=str(impact.reason_code),
                 reason=impact.reason,
+                selected_attempt_id=selected_attempt_id,
                 selected_asset_set_hash=selected_hash,
                 reuse_proof_json=proof,
                 version=1,
@@ -665,10 +680,31 @@ class ChangeImpactService:
                 is_fixture=build.is_fixture,
                 revoked=proof.get("revoked") is True,
                 source_build_node_id=str(build_node.id),
+                selected_attempt_id=(
+                    None
+                    if build_node.selected_attempt_id is None
+                    else str(build_node.selected_attempt_id)
+                ),
                 validation_ids=tuple(str(value) for value in proof.get("validation_ids", [])),
                 asset_ids=asset_ids,
             )
         return states, build.id
+
+    async def _owns_reused_attempt(self, *, build_node: BuildNode, attempt: Attempt) -> bool:
+        origin_project_id = await self._session.scalar(
+            select(Build.project_id)
+            .join(BuildNode, BuildNode.build_id == Build.id)
+            .where(
+                BuildNode.id == attempt.build_node_id,
+                BuildNode.stable_key == build_node.stable_key,
+                BuildNode.fingerprint == build_node.fingerprint,
+            )
+        )
+        if origin_project_id is None:
+            return False
+        return origin_project_id == await self._session.scalar(
+            select(Build.project_id).where(Build.id == build_node.build_id)
+        )
 
     async def _asset_integrity(
         self,
@@ -705,10 +741,10 @@ class ChangeImpactService:
         if build_node.selected_attempt_id is None:
             return False, False, ()
         attempt = await self._session.get(Attempt, build_node.selected_attempt_id)
-        if (
-            attempt is None
-            or attempt.build_node_id != build_node.id
-            or attempt.status != "SUCCEEDED"
+        if attempt is None or attempt.status != "SUCCEEDED":
+            return False, False, ()
+        if attempt.build_node_id != build_node.id and not await self._owns_reused_attempt(
+            build_node=build_node, attempt=attempt
         ):
             return False, False, ()
         rows = (
@@ -724,21 +760,12 @@ class ChangeImpactService:
         ).all()
         if not rows:
             return False, False, ()
-        expected_hashes = {asset.sha256 for _, asset in rows}
-        expected_hashes.add(
-            canonical_hash(
-                [
-                    {
-                        "role": link.role,
-                        "ordinal": link.ordinal,
-                        "sha256": asset.sha256,
-                    }
-                    for link, asset in rows
-                ]
-            )
+        expected_hash = selected_asset_set_hash(
+            SelectedAsset(role=link.role, ordinal=link.ordinal, sha256=asset.sha256)
+            for link, asset in rows
         )
         verified = all(asset.verified_at is not None for _, asset in rows) and (
-            build_node.selected_asset_set_hash in expected_hashes
+            build_node.selected_asset_set_hash == expected_hash
         )
         return True, verified, tuple(str(asset.id) for _, asset in rows)
 

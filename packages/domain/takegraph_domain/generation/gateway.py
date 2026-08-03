@@ -27,6 +27,7 @@ class GenerationEventKind(StrEnum):
     PROVIDER_PROGRESS = "PROVIDER_PROGRESS"
     PROVIDER_RETRY = "PROVIDER_RETRY"
     PROVIDER_COMPLETED = "PROVIDER_COMPLETED"
+    PROVIDER_RECOVERED = "PROVIDER_RECOVERED"
     STORED = "STORED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
@@ -90,6 +91,7 @@ class GenerationRequest(BaseModel):
     timeout_seconds: int = Field(default=480, ge=1, le=1800)
     max_retries: int = Field(default=2, ge=0, le=5)
     parent_run_id: str | None = None
+    resume_provider_request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def require_supported_generation_node(self) -> Self:

@@ -1,11 +1,11 @@
-# Root task runner (PRD §7.2). Every target is noninteractive and returns
+ # Root task runner (PRD §7.2). Every target is noninteractive and returns
 # nonzero on failure so CI can use them directly.
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 export DATABASE_URL ?= postgresql+asyncpg://takegraph:takegraph_local@127.0.0.1:5434/takegraph
 export REDIS_URL ?= redis://127.0.0.1:6380/0
 
-.PHONY: help setup up down dev worker migrate check test lint fmt typecheck doctor clean
+.PHONY: help setup up down dev worker migrate seed check test lint fmt typecheck doctor clean
 
 help: ## Show available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -33,6 +33,9 @@ worker: up migrate ## Run the durable worker and B2 reconciliation scheduler
 
 migrate: ## Apply database migrations
 	uv run alembic upgrade head
+
+seed: ## Create/update the real ORBIT demo baseline and publish v1
+	uv run python scripts/seed_demo.py
 
 check: lint typecheck test ## Format check, lint, types and tests
 

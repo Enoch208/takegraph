@@ -173,5 +173,13 @@ class NodeCacheState(BaseModel):
     is_fixture: bool = False
     revoked: bool = False
     source_build_node_id: str | None = None
+    selected_attempt_id: str | None = None
+    """The attempt that produced the selected bytes.
+
+    A node reused into a later build keeps pointing at this attempt: it is where
+    the assets, provider lineage and quality evidence actually live, and a build
+    that dropped it would leave its descendants unable to resolve their inputs.
+    """
+
     validation_ids: tuple[str, ...] = ()
     asset_ids: tuple[str, ...] = ()

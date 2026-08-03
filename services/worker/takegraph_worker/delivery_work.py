@@ -26,8 +26,8 @@ from takegraph_api.db.models import (
     Project,
     Validation,
 )
+from takegraph_domain.builds.asset_set import SelectedAsset, selected_asset_set_hash
 from takegraph_domain.builds.state_machine import assert_transition
-from takegraph_domain.canonical import JsonValue, canonical_hash
 from takegraph_domain.enums import AttemptMechanism, AttemptStatus, BuildNodeStatus, BuildStatus
 from takegraph_domain.errors import FeatureNotConfiguredError, InvalidSourceError, NotFoundError
 from takegraph_domain.execution.idempotency import submission_idempotency_key
@@ -303,6 +303,7 @@ class DeliveryWorkHandlers:
             attempt.status = str(AttemptStatus.STORED)
             asset_ids: list[uuid.UUID] = []
             selected_hashes: dict[str, str] = {}
+            selected: list[SelectedAsset] = []
             for ordinal, (artifact, stored) in enumerate(outputs):
                 asset_id = await session.scalar(
                     insert(Asset)
@@ -338,6 +339,9 @@ class DeliveryWorkHandlers:
                     raise InvalidSourceError("Delivery asset could not be indexed.")
                 asset_ids.append(asset_id)
                 selected_hashes[artifact.role] = stored.sha256
+                selected.append(
+                    SelectedAsset(role=artifact.role, ordinal=ordinal, sha256=stored.sha256)
+                )
                 await session.execute(
                     insert(AttemptAsset)
                     .values(
@@ -356,8 +360,7 @@ class DeliveryWorkHandlers:
                         ]
                     )
                 )
-            selected_payload: dict[str, JsonValue] = dict(selected_hashes)
-            asset_set_hash = canonical_hash(selected_payload)
+            asset_set_hash = selected_asset_set_hash(selected)
             validation_ids: list[str] = []
             for gate_key, evidence in (
                 ("artifact_set", {"roles": sorted(selected_hashes)}),

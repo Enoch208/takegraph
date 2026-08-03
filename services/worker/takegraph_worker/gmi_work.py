@@ -164,6 +164,9 @@ class GMIWorkHandlers:
                 raise InvalidSourceError(f"GMI node is not runnable from {node.status}.")
             if build.status not in {str(BuildStatus.QUEUED), str(BuildStatus.RUNNING)}:
                 raise InvalidSourceError(f"GMI build is not runnable from {build.status}.")
+            resume_request_id = await self._recoverable_provider_request(
+                session, build, node, model
+            )
             input_assets = await self._input_assets(session, build, project, node.stable_key)
             for asset in input_assets:
                 if asset.verified_at is None or not await asyncio.to_thread(
@@ -206,7 +209,16 @@ class GMIWorkHandlers:
             self._attempt_event(session, attempt.id, "attempt.submitting", {})
             await session.commit()
             return await self._prepared(
-                build, project, node, attempt, graph_node, policy, input_assets, model, timeout
+                build,
+                project,
+                node,
+                attempt,
+                graph_node,
+                policy,
+                input_assets,
+                model,
+                timeout,
+                resume_provider_request_id=resume_request_id,
             )
 
     async def _prepared(
@@ -221,6 +233,7 @@ class GMIWorkHandlers:
         model: str,
         timeout_seconds: int,
         done: bool = False,
+        resume_provider_request_id: str | None = None,
     ) -> PreparedGMIWork:
         operation = graph_node.spec_json.get("normalized_operation")
         if not isinstance(operation, dict):
@@ -256,6 +269,7 @@ class GMIWorkHandlers:
             idempotency_key=attempt.idempotency_key,
             timeout_seconds=timeout_seconds,
             max_retries=self._max_retries(policy),
+            resume_provider_request_id=resume_provider_request_id,
         )
         return PreparedGMIWork(
             request=request,
@@ -325,6 +339,35 @@ class GMIWorkHandlers:
         if not isinstance(value, int) or not 0 <= value <= 5:
             raise InvalidSourceError("GMI retry policy is malformed.")
         return value
+
+    @staticmethod
+    async def _recoverable_provider_request(
+        session: AsyncSession, build: Build, node: BuildNode, model: str
+    ) -> str | None:
+        if build.parent_build_id is None:
+            return None
+        previous = await session.scalar(
+            select(BuildNode).where(
+                BuildNode.build_id == build.parent_build_id,
+                BuildNode.stable_key == node.stable_key,
+                BuildNode.fingerprint == node.fingerprint,
+                BuildNode.status == str(BuildNodeStatus.FAILED),
+            )
+        )
+        if previous is None:
+            return None
+        return await session.scalar(
+            select(AttemptEvent.provider_event_json["provider_request_id"].astext)
+            .join(Attempt, Attempt.id == AttemptEvent.attempt_id)
+            .where(
+                Attempt.build_node_id == previous.id,
+                Attempt.model == model,
+                Attempt.status == str(AttemptStatus.FAILED),
+                AttemptEvent.provider_event_json["provider_request_id"].astext.isnot(None),
+            )
+            .order_by(AttemptEvent.sequence.desc())
+            .limit(1)
+        )
 
     async def _input_assets(
         self, session: AsyncSession, build: Build, project: Project, stable_key: str

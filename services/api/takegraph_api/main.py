@@ -19,7 +19,8 @@ from takegraph_domain.errors import DomainError
 
 from takegraph_api.b2_webhooks import router as b2_webhook_router
 from takegraph_api.changes import router as changes_router
-from takegraph_api.projection import DemoProof, build_demo_proof
+from takegraph_api.db.session import session_scope
+from takegraph_api.projection import DemoProof, load_demo_proof
 from takegraph_api.projects import router as projects_router
 from takegraph_api.uploads import router as uploads_router
 
@@ -137,4 +138,5 @@ async def demo_proof() -> DemoProof:
     whether these came from a projection over the seed template or from a real
     build's persisted events.
     """
-    return build_demo_proof()
+    async with session_scope() as session:
+        return await load_demo_proof(session)

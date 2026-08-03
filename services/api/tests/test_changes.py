@@ -376,6 +376,178 @@ async def test_commit_is_atomic_queues_only_the_first_ready_rebuild(
         )
 
 
+async def complete_rebuilt_nodes(session: AsyncSession, owner: Principal, build_id: uuid.UUID):
+    """Finish a committed build the way the worker would.
+
+    Nodes the commit marked REUSED already point at the previous build's attempt.
+    Only the rebuilt ones need an attempt, a verified asset, and current gates.
+    """
+    rows = (
+        await session.execute(
+            select(BuildNode, GraphNode)
+            .join(GraphNode, GraphNode.id == BuildNode.graph_node_id)
+            .where(BuildNode.build_id == build_id)
+        )
+    ).all()
+    for build_node, graph_node in rows:
+        if build_node.status == str(BuildNodeStatus.REUSED):
+            continue
+        if graph_node.node_type.startswith("SOURCE_"):
+            build_node.status = str(BuildNodeStatus.PASSED)
+            continue
+        selected_hash = canonical_hash(
+            {"stable_key": build_node.stable_key, "fingerprint": build_node.fingerprint}
+        )
+        attempt = Attempt(
+            id=uuid.uuid4(),
+            build_node_id=build_node.id,
+            attempt_no=1,
+            mechanism="PRIMARY",
+            provider="test-provider",
+            model="test-model",
+            idempotency_key=canonical_hash({"build_node_id": str(build_node.id), "slot": 1}),
+            status="SUCCEEDED",
+            completed_at=datetime.now(UTC),
+        )
+        asset = Asset(
+            id=uuid.uuid4(),
+            organization_id=owner.organization_id,
+            sha256=selected_hash,
+            size_bytes=2048,
+            mime_type="application/octet-stream",
+            media_kind="BINARY",
+            b2_bucket="test-work",
+            b2_key=f"test/{selected_hash}.bin",
+            verified_at=datetime.now(UTC),
+        )
+        session.add_all([attempt, asset])
+        await session.flush()
+        session.add(
+            AttemptAsset(
+                id=uuid.uuid4(),
+                attempt_id=attempt.id,
+                asset_id=asset.id,
+                role="primary",
+                ordinal=0,
+                selected=True,
+            )
+        )
+        build_node.status = str(BuildNodeStatus.PASSED)
+        build_node.selected_attempt_id = attempt.id
+        build_node.selected_asset_set_hash = selected_hash
+        build_node.reuse_proof_json = (
+            {}
+            if graph_node.validation_policy_id is None
+            else {
+                "validations_current": True,
+                "validation_policy_id": str(graph_node.validation_policy_id),
+                "validation_ids": [str(uuid.uuid4())],
+            }
+        )
+    build = await session.get(Build, build_id)
+    assert build is not None
+    build.status = "SUCCEEDED"
+    build.completed_at = datetime.now(UTC)
+    await session.flush()
+
+
+async def test_second_incremental_build_reuses_the_first_builds_reused_nodes(
+    session: AsyncSession, owner: Principal
+) -> None:
+    """A build that reused must itself be a valid baseline.
+
+    Fourteen nodes of the first incremental build are REUSED and their selected
+    attempts belong to the original baseline build, not to themselves. If either
+    the accepted-status rule or the cross-build attempt lookup regressed, this
+    second preview would report 18 rebuilds and every other build would
+    regenerate the whole graph.
+    """
+    service, project, _, _, _, _, plan = await preview_legal_change(session, owner)
+    first = await service.commit(
+        plan_id=plan.plan_id,
+        principal=owner,
+        request=ImpactCommitRequest(plan_hash=plan.plan_hash, start_build=True),
+        idempotency_key="second-incremental-first-build",
+    )
+    await complete_rebuilt_nodes(session, owner, first.build_id)
+
+    reused = (
+        await session.execute(
+            select(func.count(BuildNode.id)).where(
+                BuildNode.build_id == first.build_id,
+                BuildNode.status == str(BuildNodeStatus.REUSED),
+            )
+        )
+    ).scalar_one()
+    assert reused == 14
+
+    change_set = await service.create(
+        project_id=project.id,
+        principal=owner,
+        request=ChangeSetCreateRequest(
+            base_revision_id=first.project_revision_id,
+            patch=legal_patch("sugar free"),
+        ),
+    )
+    second = await service.impact(change_set_id=change_set.id, principal=owner)
+
+    assert second.summary.reuse == 14
+    assert second.summary.rebuild == 4
+    assert second.summary.provider_calls == 2
+    assert {node.stable_key for node in second.nodes if node.decision == "REBUILD"} == set(
+        EXPECTED_LEGAL_COPY_REBUILD
+    )
+
+
+async def test_reused_node_may_not_borrow_an_unrelated_nodes_attempt(
+    session: AsyncSession, owner: Principal
+) -> None:
+    """Accepting a cross-build attempt must not become "accept any attempt".
+
+    The ancestor attempt is only proof when it belongs to a node carrying the same
+    stable key and fingerprint; pointing at a different recipe's output must fail
+    the reuse proof rather than silently select the wrong asset.
+    """
+    service, project, _, _, _, _, plan = await preview_legal_change(session, owner)
+    first = await service.commit(
+        plan_id=plan.plan_id,
+        principal=owner,
+        request=ImpactCommitRequest(plan_hash=plan.plan_hash, start_build=True),
+        idempotency_key="borrowed-attempt-build",
+    )
+    await complete_rebuilt_nodes(session, owner, first.build_id)
+
+    poster = await session.scalar(
+        select(BuildNode).where(
+            BuildNode.build_id == first.build_id,
+            BuildNode.stable_key == "image.poster",
+        )
+    )
+    music = await session.scalar(
+        select(BuildNode).where(
+            BuildNode.build_id == first.build_id,
+            BuildNode.stable_key == "audio.music",
+        )
+    )
+    assert poster is not None and music is not None
+    poster.selected_attempt_id = music.selected_attempt_id
+    await session.flush()
+
+    change_set = await service.create(
+        project_id=project.id,
+        principal=owner,
+        request=ChangeSetCreateRequest(
+            base_revision_id=first.project_revision_id,
+            patch=legal_patch("sugar free"),
+        ),
+    )
+    second = await service.impact(change_set_id=change_set.id, principal=owner)
+
+    decision = next(node for node in second.nodes if node.stable_key == "image.poster")
+    assert decision.decision == "REBUILD"
+    assert decision.reason_code == "CACHE_ASSET_MISSING"
+
+
 async def test_editing_draft_invalidates_earlier_plan(
     session: AsyncSession, owner: Principal
 ) -> None:

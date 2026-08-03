@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from pydantic import BaseModel, ConfigDict
 
 from takegraph_domain.canonical import canonical_hash
-from takegraph_domain.enums import BuildNodeStatus, ImpactDecision, PricingStatus, ReasonCode
+from takegraph_domain.enums import ImpactDecision, PricingStatus, ReasonCode
 from takegraph_domain.graph.fingerprint import (
     compute_fingerprint,
     compute_source_fingerprint,
@@ -69,7 +69,7 @@ def evaluate_reuse_proof(
             reason="This output was manually invalidated.",
         )
 
-    accepted = candidate.status is BuildNodeStatus.PASSED or candidate.manually_approved
+    accepted = candidate.status.satisfies_dependency or candidate.manually_approved
     if not accepted:
         return ReuseRejection(
             reason_code=ReasonCode.CACHE_MISS,

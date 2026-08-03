@@ -8,14 +8,25 @@ a build dependency (§14.5).
 
 from __future__ import annotations
 
+import asyncio
+import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from genblaze_core.builders.run_builder import RunBuilder
 from genblaze_core.exceptions import ProviderError
 from genblaze_core.models.asset import Asset
-from genblaze_core.models.enums import Modality, PromptVisibility, ProviderErrorCode
+from genblaze_core.models.enums import (
+    Modality,
+    PromptVisibility,
+    ProviderErrorCode,
+    RunStatus,
+    StepStatus,
+)
+from genblaze_core.models.manifest import Manifest
+from genblaze_core.models.step import Step
 from genblaze_core.observability.events import (
     PipelineCompletedEvent,
     PipelineStartedEvent,
@@ -26,6 +37,7 @@ from genblaze_core.observability.events import (
 )
 from genblaze_core.pipeline import Pipeline
 from genblaze_core.pipeline.result import PipelineResult
+from genblaze_core.runnable.config import RunnableConfig
 from genblaze_core.storage.base import KeyStrategy
 from genblaze_core.storage.sink import ObjectStorageSink
 from genblaze_gmicloud import GMICloudImageProvider, GMICloudVideoProvider
@@ -53,6 +65,12 @@ from takegraph_domain.generation import (
 from takegraph_infrastructure.b2 import B2Settings
 
 GMI_QUEUE_BASE_URL = "https://console.gmicloud.ai/api/v1/ie/requestqueue/apikey"
+
+PROVIDER_MESSAGE_LIMIT = 400
+
+_CREDENTIAL_QUERY_VALUE = re.compile(
+    r"(?i)([?&](?:x-amz-[a-z0-9-]+|signature|token|api[_-]?key|access[_-]?key)=)[^&\s\"']+"
+)
 
 PipelineFactory = Callable[..., Any]
 ProviderFactory = Callable[[GenerationRequest], Any]
@@ -112,6 +130,13 @@ def classify_provider_error(code: ProviderErrorCode | None) -> ErrorClass:
     return ErrorClass.INTERNAL
 
 
+def redact_provider_message(message: str) -> str:
+    redacted = _CREDENTIAL_QUERY_VALUE.sub(r"\1[REDACTED]", message.strip())
+    if len(redacted) > PROVIDER_MESSAGE_LIMIT:
+        return redacted[:PROVIDER_MESSAGE_LIMIT] + "…"
+    return redacted
+
+
 def normalized_gmi_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
     """Translate TAKEGRAPH policy names into the installed connector surface.
 
@@ -124,6 +149,21 @@ def normalized_gmi_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
         if "duration" in normalized:
             raise ValueError("parameters cannot contain both duration and duration_seconds")
         normalized["duration"] = normalized.pop("duration_seconds")
+    return normalized
+
+
+def provider_parameters(request: GenerationRequest) -> dict[str, Any]:
+    """Apply model-specific fields from GMI's live model contract.
+
+    ``pixverse-v6-i2v`` accepts the graph's exact four-second duration and
+    consumes the chained keyframe through Genblaze's standard ``image`` slot.
+    Its live contract requires an explicit quality and does not expose a
+    separate aspect-ratio field: the keyframe determines that ratio.
+    """
+    normalized = normalized_gmi_parameters(request.parameters)
+    if request.model == "pixverse-v6-i2v":
+        normalized.pop("aspect_ratio", None)
+        normalized.setdefault("quality", "720p")
     return normalized
 
 
@@ -232,6 +272,25 @@ class GMICloudGateway:
             )
 
         provider = self._provider_factory(request)
+        try:
+            async for event in self._execute_with_provider(request, provider):
+                yield event
+        finally:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
+
+    async def _execute_with_provider(
+        self, request: GenerationRequest, provider: Any
+    ) -> AsyncIterator[GenerationEvent]:
+        pending_id = request.resume_provider_request_id
+        if pending_id is not None:
+            result = await self._resume(request, provider, pending_id)
+            if result is not None:
+                for event in self._recovered_events(request, result, pending_id):
+                    yield event
+                return
+
         sink = self._sink_factory(request)
         pipeline = self._pipeline_factory(
             name=f"takegraph:{request.stable_key}",
@@ -244,9 +303,6 @@ class GMICloudGateway:
             build_node_id=str(request.build_node_id),
             stable_key=request.stable_key,
             idempotency_key=request.idempotency_key,
-        )
-        modality = (
-            Modality.IMAGE if request.node_type is NodeType.IMAGE_GENERATION else Modality.VIDEO
         )
         inputs = [
             Asset(
@@ -262,44 +318,193 @@ class GMICloudGateway:
             provider,
             model=request.model,
             prompt=request.prompt,
-            modality=modality,
+            modality=self._modality(request),
             fallback_models=list(request.fallback_models),
             external_inputs=inputs or None,
             prompt_visibility=PromptVisibility.PRIVATE,
-            params=normalized_gmi_parameters(request.parameters),
+            params=provider_parameters(request),
             metadata={
                 "attempt_id": str(request.attempt_id),
                 "stable_key": request.stable_key,
             },
         )
 
+        submissions: list[str] = []
+        config = RunnableConfig(
+            timeout=float(request.timeout_seconds),
+            max_retries=request.max_retries,
+            on_submit=lambda _step_id, prediction_id: submissions.append(str(prediction_id)),
+        )
+
         terminal_emitted = False
-        seen_provider_request_ids: set[str] = set()
+        seen: set[str] = set()
+        failure: Exception | None = None
         try:
             async for event in pipeline.astream(
                 sink=sink,
-                timeout=float(request.timeout_seconds),
-                max_retries=request.max_retries,
                 raise_on_failure=True,
+                _config_override=config,
                 _owns_sink=True,
             ):
-                async for mapped in self._map_event(
-                    request, event, seen_provider_request_ids=seen_provider_request_ids
-                ):
-                    if mapped.kind in (GenerationEventKind.COMPLETED, GenerationEventKind.FAILED):
+                for pending in self._submission_events(request, submissions, seen):
+                    yield pending
+                async for mapped in self._map_event(request, event, seen_provider_request_ids=seen):
+                    if mapped.kind in (
+                        GenerationEventKind.COMPLETED,
+                        GenerationEventKind.FAILED,
+                    ):
                         terminal_emitted = True
                     yield mapped
-        except ProviderError as exc:
-            if not terminal_emitted:
-                yield self._failure_event(request, exc.error_code)
-        except Exception:
-            if not terminal_emitted:
-                yield self._failure_event(request, None)
-            raise
+        except Exception as exc:
+            failure = exc
+        if terminal_emitted:
+            return
+        for pending in self._submission_events(request, submissions, seen):
+            yield pending
+        if failure is None:
+            failure = AssetVerificationError("Generation stream ended without a terminal result.")
+        async for event in self._recover(request, provider, submissions, failure):
+            yield event
+
+    @staticmethod
+    def _modality(request: GenerationRequest) -> Modality:
+        if request.node_type is NodeType.IMAGE_GENERATION:
+            return Modality.IMAGE
+        return Modality.VIDEO
+
+    @staticmethod
+    def _submission_events(
+        request: GenerationRequest, submissions: list[str], seen: set[str]
+    ) -> list[GenerationEvent]:
+        events: list[GenerationEvent] = []
+        for provider_request_id in submissions:
+            if provider_request_id in seen:
+                continue
+            seen.add(provider_request_id)
+            events.append(
+                GenerationEvent(
+                    kind=GenerationEventKind.PROVIDER_SUBMITTED,
+                    attempt_id=request.attempt_id,
+                    provider=request.provider,
+                    model=request.model,
+                    provider_request_id=provider_request_id,
+                )
+            )
+        return events
+
+    async def _recover(
+        self,
+        request: GenerationRequest,
+        provider: Any,
+        submissions: list[str],
+        failure: Exception,
+    ) -> AsyncIterator[GenerationEvent]:
+        code = failure.error_code if isinstance(failure, ProviderError) else None
+        message = redact_provider_message(str(failure)) or "GMI generation failed."
+        if not submissions:
+            yield self._failure_event(request, code, message)
+            return
+        provider_request_id = submissions[-1]
+        try:
+            result = await self._resume(request, provider, provider_request_id)
+        except Exception as exc:
+            recovery_message = redact_provider_message(str(exc))
+            yield self._failure_event(
+                request,
+                code,
+                f"{message} Recovery of {provider_request_id} failed: {recovery_message}",
+            )
+            return
+        if result is None:
+            yield self._failure_event(request, code, message)
+            return
+        for event in self._recovered_events(request, result, provider_request_id, reason=message):
+            yield event
+
+    @staticmethod
+    def _recovered_events(
+        request: GenerationRequest,
+        result: PipelineResult,
+        provider_request_id: str,
+        *,
+        reason: str | None = None,
+    ) -> list[GenerationEvent]:
+        base = {
+            "attempt_id": request.attempt_id,
+            "provider": request.provider,
+            "model": request.model,
+            "run_id": result.run.run_id,
+        }
+        events = [
+            GenerationEvent(
+                kind=GenerationEventKind.PROVIDER_RECOVERED,
+                provider_request_id=provider_request_id,
+                message=reason,
+                **base,
+            )
+        ]
+        events.extend(
+            GenerationEvent(kind=GenerationEventKind.STORED, asset=asset, **base)
+            for asset in durable_assets(result)
+        )
+        events.append(
+            GenerationEvent(
+                kind=GenerationEventKind.COMPLETED,
+                provider_request_id=provider_request_id,
+                manifest_hash=result.manifest.canonical_hash,
+                message="Recovered an already-completed provider request without resubmitting.",
+                **base,
+            )
+        )
+        return events
+
+    async def _resume(
+        self, request: GenerationRequest, provider: Any, provider_request_id: str
+    ) -> PipelineResult | None:
+        step = Step(
+            provider=request.provider,
+            model=request.model,
+            prompt=request.prompt,
+            modality=self._modality(request),
+            prompt_visibility=PromptVisibility.PRIVATE,
+            params=provider_parameters(request),
+            metadata={
+                "attempt_id": str(request.attempt_id),
+                "stable_key": request.stable_key,
+            },
+        )
+        resumed = await provider.aresume(
+            provider_request_id,
+            step,
+            RunnableConfig(
+                timeout=float(request.timeout_seconds),
+                max_retries=request.max_retries,
+            ),
+        )
+        if resumed.status is not StepStatus.SUCCEEDED or not resumed.assets:
+            return None
+        run = (
+            RunBuilder(f"takegraph:{request.stable_key}")
+            .tenant(str(request.organization_id))
+            .project(str(request.project_id))
+            .meta(
+                attempt_id=str(request.attempt_id),
+                build_node_id=str(request.build_node_id),
+                stable_key=request.stable_key,
+                idempotency_key=request.idempotency_key,
+                recovered_provider_request_id=provider_request_id,
+            )
+            .add_step(resumed)
+            .status(RunStatus.COMPLETED)
+            .build()
+        )
+        manifest = Manifest.from_run(run)
+        sink = self._sink_factory(request)
+        try:
+            await asyncio.to_thread(sink.write_run, run, manifest)
         finally:
-            close = getattr(provider, "close", None)
-            if callable(close):
-                close()
+            await asyncio.to_thread(sink.close)
+        return PipelineResult(run, manifest)
 
     async def _map_event(
         self,
@@ -339,6 +544,7 @@ class GMICloudGateway:
                 run_id=event.run_id,
                 retry_attempt=event.attempt,
                 error_code=event.error_code,
+                message=redact_provider_message(f"{event.phase}: {event.error or 'unknown error'}"),
                 **base,
             )
         elif isinstance(event, StepCompletedEvent):
@@ -365,7 +571,7 @@ class GMICloudGateway:
 
     @staticmethod
     def _failure_event(
-        request: GenerationRequest, code: ProviderErrorCode | None
+        request: GenerationRequest, code: ProviderErrorCode | None, message: str
     ) -> GenerationEvent:
         return GenerationEvent(
             kind=GenerationEventKind.FAILED,
@@ -374,7 +580,7 @@ class GMICloudGateway:
             model=request.model,
             error_class=classify_provider_error(code),
             error_code=code.value if code is not None else "unknown",
-            message="Generation failed; inspect the attempt record with its correlation ID.",
+            message=redact_provider_message(message),
         )
 
     async def reconcile(self, attempt: AttemptRef) -> ReconciliationResult:
@@ -448,4 +654,6 @@ __all__ = [
     "classify_provider_error",
     "durable_assets",
     "normalized_gmi_parameters",
+    "provider_parameters",
+    "redact_provider_message",
 ]

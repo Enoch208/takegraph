@@ -121,6 +121,16 @@ class TestReuseProofRejections:
         )
         assert rejection is not None
 
+    def test_reused_candidate_is_reusable(self) -> None:
+        """§10.2: "REUSED and PASSED both satisfy dependencies."
+
+        Build N reuses a node from build N-1 and records REUSED. If that status were
+        not an accepted candidate, build N+1 would rebuild it — every second build
+        would regenerate the whole graph even when nothing changed.
+        """
+        candidate = self._candidate(status=BuildNodeStatus.REUSED)
+        assert evaluate_reuse_proof(proposed_fingerprint="fp-exact", candidate=candidate) is None
+
     def test_manually_approved_node_is_reusable(self) -> None:
         """§12.3: "previously reached PASSED or was explicitly approved"."""
         candidate = self._candidate(status=BuildNodeStatus.WAITING_REVIEW, manually_approved=True)
@@ -132,6 +142,47 @@ class TestReuseProofRejections:
         )
         assert rejection is not None
         assert rejection.reason_code is ReasonCode.CACHE_ASSET_MISSING
+
+
+class TestReuseIsTransitiveAcrossBuilds:
+    """A build that reuses must itself be reusable, or incremental building decays.
+
+    Every build after the first records REUSED on the nodes it did not regenerate.
+    Those rows are the reuse candidates for the build after that, so if REUSED were
+    not an accepted candidate status the graph would fully regenerate on every
+    other build and the 14/4 promise would hold exactly once.
+    """
+
+    @staticmethod
+    def _as_reused(states: dict[str, NodeCacheState]) -> dict[str, NodeCacheState]:
+        return {
+            key: state.model_copy(update={"status": BuildNodeStatus.REUSED})
+            if not key.startswith("source.")
+            else state
+            for key, state in states.items()
+        }
+
+    def test_unchanged_graph_over_a_reused_baseline_rebuilds_nothing(self) -> None:
+        graph = orbit_graph()
+        result = plan(graph, self._as_reused(completed_build_states(graph)))
+
+        assert result.summary.reuse == 18
+        assert result.summary.rebuild == 0
+        assert result.summary.provider_calls == 0
+
+    def test_as01_still_holds_on_a_second_consecutive_incremental_build(self) -> None:
+        """AS-01 over a baseline whose nodes are REUSED, not freshly PASSED."""
+        baseline = self._as_reused(completed_build_states(orbit_graph(legal_line="zero sugar")))
+        result = plan(orbit_graph(legal_line="no added sugar"), baseline)
+
+        assert (result.summary.reuse, result.summary.rebuild) == (14, 4)
+        assert set(result.rebuild_keys) == {
+            "copy.pack",
+            "audio.narration",
+            "graphic.end_card",
+            "compose.delivery_package",
+        }
+        assert result.summary.provider_calls == 2
 
 
 class TestFixtureIsolation:

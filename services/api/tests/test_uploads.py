@@ -149,6 +149,21 @@ def _put(url: str, data: bytes, content_type: str) -> None:
         assert response.status in (200, 204)
 
 
+def _organization_asset_count():
+    return text("select count(*) from assets where organization_id = :id")
+
+
+_PROJECT_SOURCE_VERSIONS = (
+    "select count(*) from source_versions v "
+    "join sources s on s.id = v.source_id "
+    "where s.project_id = :project_id"
+)
+
+
+def _project_source_version_count(extra: str = ""):
+    return text(f"{_PROJECT_SOURCE_VERSIONS} {extra}")  # noqa: S608
+
+
 class TestSourceUploadRoundTrip:
     async def test_presigned_put_finalizes_real_bytes_and_is_idempotent(
         self, session, b2_store: B2Store, project_context, tmp_path
@@ -187,14 +202,49 @@ class TestSourceUploadRoundTrip:
         assert completed.sha256 == digest
         assert completed.mime_type == "image/png"
         assert completed.media_kind == "IMAGE"
-        assert await session.scalar(text("select count(*) from assets")) == 1
-        assert await session.scalar(text("select count(*) from source_versions")) == 1
-        assert await session.scalar(text("select count(*) from project_revisions")) == 1
-        assert await session.scalar(text("select count(*) from graph_revisions")) == 1
-        assert await session.scalar(text("select count(*) from graph_nodes")) == 18
+        scope = {"organization_id": organization.id, "project_id": project.id}
         assert (
             await session.scalar(
-                text("select count(*) from source_versions where revision_id is not null")
+                text("select count(*) from assets where organization_id = :organization_id"),
+                scope,
+            )
+            == 1
+        )
+        assert await session.scalar(_project_source_version_count(), scope) == 1
+        assert (
+            await session.scalar(
+                text("select count(*) from project_revisions where project_id = :project_id"),
+                scope,
+            )
+            == 1
+        )
+        assert (
+            await session.scalar(
+                text(
+                    "select count(*) from graph_revisions g "
+                    "join project_revisions r on r.id = g.project_revision_id "
+                    "where r.project_id = :project_id"
+                ),
+                scope,
+            )
+            == 1
+        )
+        assert (
+            await session.scalar(
+                text(
+                    "select count(*) from graph_nodes n "
+                    "join graph_revisions g on g.id = n.graph_revision_id "
+                    "join project_revisions r on r.id = g.project_revision_id "
+                    "where r.project_id = :project_id"
+                ),
+                scope,
+            )
+            == 18
+        )
+        assert (
+            await session.scalar(
+                _project_source_version_count(extra="and v.revision_id is not null"),
+                scope,
             )
             == 1
         )
@@ -246,7 +296,8 @@ class TestSourceUploadRoundTrip:
     async def test_size_mismatch_stays_incomplete(
         self, session, b2_store: B2Store, project_context, tmp_path
     ) -> None:
-        _organization, project, principal = project_context
+        organization, project, principal = project_context
+        organization_id = organization.id
         service = _service(session, b2_store, tmp_path)
         initiated = await service.initiate(
             project_id=project.id,
@@ -268,7 +319,7 @@ class TestSourceUploadRoundTrip:
                 principal=principal,
             )
         await session.rollback()
-        assert await session.scalar(text("select count(*) from assets")) == 0
+        assert await session.scalar(_organization_asset_count(), {"id": organization_id}) == 0
         b2_store.delete(
             temporary_upload_key(
                 upload_id=initiated.upload_id,
@@ -279,7 +330,8 @@ class TestSourceUploadRoundTrip:
     async def test_magic_bytes_override_claimed_mime(
         self, session, b2_store: B2Store, project_context, tmp_path
     ) -> None:
-        _organization, project, principal = project_context
+        organization, project, principal = project_context
+        organization_id = organization.id
         service = _service(session, b2_store, tmp_path)
         data = b"plain text pretending to be a png"
         initiated = await service.initiate(
@@ -302,7 +354,7 @@ class TestSourceUploadRoundTrip:
                 principal=principal,
             )
         await session.rollback()
-        assert await session.scalar(text("select count(*) from assets")) == 0
+        assert await session.scalar(_organization_asset_count(), {"id": organization_id}) == 0
         b2_store.delete(temporary_upload_key(upload_id=initiated.upload_id, filename="fake.png"))
 
 

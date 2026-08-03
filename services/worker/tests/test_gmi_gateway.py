@@ -36,6 +36,8 @@ from takegraph_worker.gmi_gateway import (
     classify_provider_error,
     durable_assets,
     normalized_gmi_parameters,
+    provider_parameters,
+    redact_provider_message,
 )
 
 ORG = uuid.UUID("10000000-0000-0000-0000-000000000001")
@@ -54,7 +56,7 @@ def generation_request(**overrides: object) -> GenerationRequest:
         "stable_key": "video.clip.01",
         "node_type": NodeType.VIDEO_GENERATION,
         "provider": "gmicloud",
-        "model": "wan2.6-r2v",
+        "model": "pixverse-v6-i2v",
         "prompt": "Animate the approved keyframe.",
         "parameters": {"duration_seconds": 4, "aspect_ratio": "16:9"},
         "inputs": (
@@ -66,7 +68,7 @@ def generation_request(**overrides: object) -> GenerationRequest:
                 size_bytes=1024,
             ),
         ),
-        "fallback_models": ("pixverse-v5.6-i2v",),
+        "fallback_models": ("kling-v3-image-to-video",),
         "idempotency_key": "cd" * 32,
     }
     values.update(overrides)
@@ -87,8 +89,8 @@ def settings() -> GMICloudSettings:
     return GMICloudSettings(
         api_key="secret-that-must-not-be-repr-visible",
         image_model="seedream-5.0-pro",
-        video_model="wan2.6-r2v",
-        video_fallback_model="pixverse-v5.6-i2v",
+        video_model="pixverse-v6-i2v",
+        video_fallback_model="kling-v3-image-to-video",
     )
 
 
@@ -97,7 +99,7 @@ def completed_result(
 ) -> PipelineResult:
     step = Step(
         provider="gmicloud",
-        model="wan2.6-r2v",
+        model="pixverse-v6-i2v",
         status=StepStatus.SUCCEEDED,
         assets=[
             Asset(
@@ -154,6 +156,12 @@ class TestParameterAndErrorMapping:
         with pytest.raises(ValueError, match="both duration"):
             normalized_gmi_parameters({"duration": 4, "duration_seconds": 4})
 
+    def test_pixverse_v6_uses_live_i2v_parameter_contract(self) -> None:
+        assert provider_parameters(generation_request()) == {
+            "duration": 4,
+            "quality": "720p",
+        }
+
     @pytest.mark.parametrize(
         ("code", "expected"),
         [
@@ -201,6 +209,17 @@ class FakeProvider:
 
     def close(self) -> None:
         self.closed = True
+
+
+class FakeSink:
+    def __init__(self) -> None:
+        self.written: list[str] = []
+
+    def write_run(self, run: Any, manifest: Any) -> None:
+        self.written.append(run.run_id)
+
+    def close(self) -> None:
+        return None
 
 
 class FakePipeline:
@@ -260,6 +279,28 @@ class FailingPipeline(FakePipeline):
         raise ProviderError("credential rejected", error_code=ProviderErrorCode.AUTH_FAILURE)
 
 
+class SubmittedThenFailingPipeline(FakePipeline):
+    async def astream(self, **values: Any) -> AsyncIterator[StreamEvent]:
+        config = values["_config_override"]
+        yield PipelineStartedEvent(run_id=self.result.run.run_id, total_steps=1)
+        config["on_submit"]("step-1", "provider-request-9")
+        raise ProviderError(
+            "Poll timeout after 100.0s (limit: 480.0s)",
+            error_code=ProviderErrorCode.TIMEOUT,
+        )
+
+
+class RecoveringProvider(FakeProvider):
+    def __init__(self, step: Step) -> None:
+        super().__init__()
+        self.step = step
+        self.resumed: list[str] = []
+
+    async def aresume(self, prediction_id: Any, step: Step, config: Any) -> Step:
+        self.resumed.append(str(prediction_id))
+        return self.step
+
+
 class TestGatewayStream:
     async def test_maps_genblaze_events_and_enforces_durable_completion(self) -> None:
         provider = FakeProvider()
@@ -304,4 +345,83 @@ class TestGatewayStream:
         assert [event.kind for event in events] == [GenerationEventKind.FAILED]
         assert events[0].error_class is ErrorClass.AUTH
         assert events[0].error_code == ProviderErrorCode.AUTH_FAILURE.value
+        assert events[0].message == "credential rejected"
         assert provider.closed is True
+
+
+class TestPaidWorkRecovery:
+    @staticmethod
+    def _gateway(provider: FakeProvider, pipeline: FakePipeline) -> GMICloudGateway:
+        return GMICloudGateway(
+            settings(),
+            b2_settings(),
+            pipeline_factory=lambda **_: pipeline,
+            provider_factory=lambda _: provider,
+            sink_factory=lambda _: FakeSink(),
+        )
+
+    async def test_completed_provider_job_is_recovered_instead_of_lost(self) -> None:
+        provider = RecoveringProvider(completed_result().run.steps[0])
+        gateway = self._gateway(provider, SubmittedThenFailingPipeline(completed_result()))
+
+        events = [event async for event in gateway.execute(generation_request())]
+
+        assert [event.kind for event in events] == [
+            GenerationEventKind.RUN_STARTED,
+            GenerationEventKind.PROVIDER_SUBMITTED,
+            GenerationEventKind.PROVIDER_RECOVERED,
+            GenerationEventKind.STORED,
+            GenerationEventKind.COMPLETED,
+        ]
+        assert provider.resumed == ["provider-request-9"]
+        assert events[1].provider_request_id == "provider-request-9"
+        assert events[2].message == "Poll timeout after 100.0s (limit: 480.0s)"
+        assert events[3].asset is not None
+        assert events[3].asset.sha256 == "ef" * 32
+        assert provider.closed is True
+
+    async def test_unrecoverable_job_reports_the_real_provider_error(self) -> None:
+        failed = completed_result().run.steps[0]
+        failed.status = StepStatus.FAILED
+        failed.assets = []
+        provider = RecoveringProvider(failed)
+        gateway = self._gateway(provider, SubmittedThenFailingPipeline(completed_result()))
+
+        events = [event async for event in gateway.execute(generation_request())]
+
+        assert [event.kind for event in events] == [
+            GenerationEventKind.RUN_STARTED,
+            GenerationEventKind.PROVIDER_SUBMITTED,
+            GenerationEventKind.FAILED,
+        ]
+        assert events[-1].error_class is ErrorClass.TRANSIENT
+        assert events[-1].message == "Poll timeout after 100.0s (limit: 480.0s)"
+
+    async def test_known_provider_request_is_resumed_before_paying_again(self) -> None:
+        provider = RecoveringProvider(completed_result().run.steps[0])
+        pipeline = FakePipeline(completed_result())
+        gateway = self._gateway(provider, pipeline)
+
+        events = [
+            event
+            async for event in gateway.execute(
+                generation_request(resume_provider_request_id="already-paid-7")
+            )
+        ]
+
+        assert [event.kind for event in events] == [
+            GenerationEventKind.PROVIDER_RECOVERED,
+            GenerationEventKind.STORED,
+            GenerationEventKind.COMPLETED,
+        ]
+        assert provider.resumed == ["already-paid-7"]
+        assert pipeline.step_values == {}
+
+    def test_signed_input_urls_are_redacted_from_provider_errors(self) -> None:
+        message = redact_provider_message(
+            "submit failed: https://b2.example/asset.jpg"
+            "?X-Amz-Credential=005d1e&X-Amz-Signature=08f26fede170f2c6&token=abc"
+        )
+        assert "08f26fede170f2c6" not in message
+        assert "005d1e" not in message
+        assert message.count("[REDACTED]") == 3

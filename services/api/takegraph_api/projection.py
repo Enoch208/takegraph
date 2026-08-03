@@ -18,6 +18,8 @@ import hashlib
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from takegraph_domain.enums import BuildNodeStatus, PricingStatus
 from takegraph_domain.graph.compiler import compile_graph
 from takegraph_domain.graph.fingerprint import compute_fingerprint, compute_source_fingerprint
@@ -31,6 +33,8 @@ from takegraph_domain.graph.orbit import (
     REFERENCED_POLICIES,
 )
 from takegraph_domain.graph.types import CompiledGraph, NodeCacheState
+
+from takegraph_api.db.models import Build, DomainEvent, Project
 
 GENERATOR_CODE_VERSION = "seed-projection-1"
 
@@ -176,3 +180,26 @@ def build_demo_proof() -> DemoProof:
         plan_hash=plan.plan_hash,
         graph_hash=revised.canonical_hash,
     )
+
+
+async def load_demo_proof(session: AsyncSession) -> DemoProof:
+    """Prefer the latest proof event bound to a successful real demo build."""
+    event = await session.scalar(
+        select(DomainEvent)
+        .join(Build, Build.id == DomainEvent.build_id)
+        .join(Project, Project.id == Build.project_id)
+        .where(
+            DomainEvent.event_type == "demo.proof.computed",
+            Build.status == "SUCCEEDED",
+            Build.is_fixture.is_(False),
+            Project.is_demo.is_(True),
+        )
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    )
+    if event is None:
+        return build_demo_proof()
+    payload = dict(event.payload_json)
+    payload["source"] = "BUILD_EVENTS"
+    payload["verified_build"] = True
+    return DemoProof.model_validate(payload)

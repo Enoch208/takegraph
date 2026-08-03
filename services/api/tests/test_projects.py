@@ -220,7 +220,12 @@ async def test_project_create_rejects_float_in_hashed_spec(session, owner) -> No
                 ),
             )
         await session.rollback()
-        assert await session.scalar(select(Project.id)) is None
+        assert (
+            await session.scalar(
+                select(Project.id).where(Project.organization_id == owner.organization_id)
+            )
+            is None
+        )
     finally:
         await _cleanup_organization(session, owner.organization_id)
 

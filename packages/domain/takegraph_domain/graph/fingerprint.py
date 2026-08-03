@@ -22,6 +22,9 @@ proposed fingerprint". The placeholder embeds the producer's proposed fingerprin
 so it differs from the previously selected asset hash and the invalidation
 propagates — which is exactly how a rebuild cascades to descendants."""
 
+GENERATOR_CODE_VERSION = "takegraph-generator-v1"
+"""Version of executable node semantics included in every non-source fingerprint."""
+
 
 def pending_output_ref(proposed_fingerprint: str) -> str:
     return f"{PENDING_PREFIX}{proposed_fingerprint}"
